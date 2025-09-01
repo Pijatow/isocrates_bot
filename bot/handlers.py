@@ -1,6 +1,7 @@
 import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
+from .utils import retry_on_network_error
 
 # Get the specific logger for user messages
 logger = logging.getLogger("UserMessages")
@@ -8,6 +9,7 @@ logger = logging.getLogger("UserMessages")
 app_logger = logging.getLogger()
 
 
+@retry_on_network_error
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Starts the conversation and asks the user if they want to register for the event.
@@ -35,6 +37,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return CHOOSING
 
 
+@retry_on_network_error
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Handles the user's decision to register or not.
@@ -61,6 +64,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
 
+@retry_on_network_error
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
     Cancels and ends the current conversation.
