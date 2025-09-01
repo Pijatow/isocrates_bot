@@ -16,6 +16,7 @@ from config import (
     READ_TIMEOUT,
     ADMIN_CHOOSING,
     MANAGING_EVENTS,
+    VIEWING_EVENT,
     GETTING_EVENT_NAME,
     GETTING_EVENT_DATE,
     GETTING_REMINDERS,
@@ -58,12 +59,20 @@ def run_bot() -> None:
                 CallbackQueryHandler(admin.manage_events, pattern="^manage_events$"),
             ],
             MANAGING_EVENTS: [
+                CallbackQueryHandler(admin.view_event_details, pattern="^view_event_"),
                 CallbackQueryHandler(
                     admin.prompt_for_event_name, pattern="^create_event$"
                 ),
-                # Add handler for the back button
                 CallbackQueryHandler(admin.admin_panel, pattern="^admin_back$"),
-                # We will add a handler for viewing specific events here later
+            ],
+            VIEWING_EVENT: [
+                CallbackQueryHandler(
+                    admin.set_active_event_action, pattern="^set_active_"
+                ),
+                CallbackQueryHandler(
+                    admin.delete_event_action, pattern="^delete_event_"
+                ),
+                CallbackQueryHandler(admin.manage_events, pattern="^manage_events$"),
             ],
             GETTING_EVENT_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin.get_event_name)

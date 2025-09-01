@@ -217,3 +217,40 @@ def get_events_with_pending_reminders():
     events = cursor.fetchall()
     conn.close()
     return events
+
+
+def get_event_by_id(event_id: int):
+    """Fetches a single event by its ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM events WHERE event_id = ?", (event_id,))
+    event = cursor.fetchone()
+    conn.close()
+    return event
+
+
+def set_active_event(event_id: int):
+    """Sets a specific event as active and deactivates all others."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE events SET is_active = 0")
+    cursor.execute("UPDATE events SET is_active = 1 WHERE event_id = ?", (event_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_event_by_id(event_id: int):
+    """Deletes an event and all its associated registrations."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Use a transaction to ensure both operations succeed or fail together
+    cursor.execute("BEGIN TRANSACTION")
+    try:
+        cursor.execute("DELETE FROM registrations WHERE event_id = ?", (event_id,))
+        cursor.execute("DELETE FROM events WHERE event_id = ?", (event_id,))
+        cursor.execute("COMMIT")
+    except sqlite3.Error:
+        cursor.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()

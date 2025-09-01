@@ -8,6 +8,7 @@ import database as db
 from .utils import admin_only
 from config import (
     MANAGING_EVENTS,
+    VIEWING_EVENT,
     GETTING_EVENT_NAME,
     GETTING_EVENT_DATE,
     GETTING_REMINDERS,
@@ -21,7 +22,6 @@ logger = logging.getLogger()
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point for the admin conversation. Shows the main admin panel."""
-    # This can be called by a command or by a "back" button, so we handle both.
     message = update.message or update.callback_query.message
 
     keyboard = [
@@ -34,7 +34,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # If it's a callback, edit the message. If it's a command, send a new one.
     if update.callback_query:
         await update.callback_query.edit_message_text(
             "Admin Control Panel:", reply_markup=reply_markup
@@ -77,11 +76,15 @@ async def view_pending_registrations(
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_photo(
-        photo=file_id, caption=caption, reply_markup=reply_markup
+    # Send the photo as a new message from the bot
+    await context.bot.send_photo(
+        chat_id=query.message.chat_id,
+        photo=file_id,
+        caption=caption,
+        reply_markup=reply_markup,
     )
-    # The message with the buttons is the one showing the receipt, so we can't delete the query message.
-    # Instead, we effectively end the interaction here from the admin's side.
+    # Delete the original admin panel message
+    await query.delete_message()
     return ConversationHandler.END
 
 
@@ -125,8 +128,11 @@ async def handle_registration_rejection(
 @admin_only
 async def manage_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Shows the event management options with a list of all events."""
-    query = update.callback_query
-    await query.answer()
+    # This function can now be triggered by a button press (callback_query)
+    # or after creating an event (message).
+    message = update.message or update.callback_query.message
+    if update.callback_query:
+        await update.callback_query.answer()
 
     events = db.get_all_events()
     keyboard = []
@@ -135,11 +141,10 @@ async def manage_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         for event in events:
             prefix = "✅ " if event["is_active"] else ""
             button_text = f"{prefix}{event['name']} ({event['date']})"
-            # We will add functionality for this button later
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        button_text, callback_data=f"event_{event['event_id']}"
+                        button_text, callback_data=f"view_event_{event['event_id']}"
                     )
                 ]
             )
@@ -152,8 +157,102 @@ async def manage_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("Event Management:", reply_markup=reply_markup)
+
+    # If called from a button, edit the message. If called after creation, send a new one.
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "Event Management:", reply_markup=reply_markup
+        )
+    else:
+        await message.reply_text("Event Management:", reply_markup=reply_markup)
+
     return MANAGING_EVENTS
+
+
+@admin_only
+async def view_event_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Shows detailed information and management options for a specific event."""
+    query = update.callback_query
+    await query.answer()
+
+    event_id = int(query.data.split("_")[2])
+    context.user_data["selected_event_id"] = event_id
+
+    event = db.get_event_by_id(event_id)
+    if not event:
+        await query.edit_message_text("Error: Event not found.")
+        return MANAGING_EVENTS
+
+    status = "Active" if event["is_active"] else "Inactive"
+    details_text = (
+        f"Event: {event['name']}\n"
+        f"Date: {event['date']}\n"
+        f"Reminders (hours before): {event['reminders']}\n"
+        f"Status: {status}"
+    )
+
+    keyboard = []
+    if not event["is_active"]:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "🚀 Set Active", callback_data=f"set_active_{event_id}"
+                )
+            ]
+        )
+
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                "🗑️ Delete Event", callback_data=f"delete_event_{event_id}"
+            )
+        ]
+    )
+    keyboard.append(
+        [InlineKeyboardButton("⬅️ Back to Event List", callback_data="manage_events")]
+    )
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(details_text, reply_markup=reply_markup)
+
+    return VIEWING_EVENT
+
+
+@admin_only
+async def set_active_event_action(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Sets the selected event as the active one."""
+    query = update.callback_query
+    await query.answer()
+
+    event_id = int(query.data.split("_")[2])
+    db.set_active_event(event_id)
+
+    await query.answer("✅ Event has been set as active.", show_alert=True)
+
+    # Go back to the manage events screen to show the updated list
+    return await manage_events(update, context)
+
+
+@admin_only
+async def delete_event_action(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Deletes the selected event after confirmation."""
+    query = update.callback_query
+    await query.answer()
+
+    event_id = int(query.data.split("_")[2])
+    db.delete_event_by_id(event_id)
+
+    await query.answer("🗑️ Event has been deleted.", show_alert=True)
+
+    # Go back to the manage events screen
+    return await manage_events(update, context)
+
+
+# --- Event Creation Flow ---
 
 
 @admin_only
@@ -191,7 +290,7 @@ async def get_event_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def save_event_and_finish(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Saves the new event to the database and ends the admin conversation."""
+    """Saves the new event to the database and transitions back to the event management screen."""
     reminders = update.message.text
     event_name = context.user_data.get("event_name")
     event_date = context.user_data.get("event_date")
@@ -208,9 +307,9 @@ async def save_event_and_finish(
     )
     context.user_data.clear()
 
-    # Restart the admin panel to show the updated event list
-    await admin_panel(update, context)
-    return ConversationHandler.END
+    # Now we call manage_events with the real update object.
+    # This will display the updated list of events.
+    return await manage_events(update, context)
 
 
 @admin_only
@@ -218,7 +317,6 @@ async def cancel_admin_conversation(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     """Cancels any admin action and clears temporary data."""
-    # Determine if it's a command or a callback query
     if update.callback_query:
         await update.callback_query.answer()
         message = update.callback_query.message

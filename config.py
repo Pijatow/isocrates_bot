@@ -37,10 +37,11 @@ CHOOSING, AWAITING_RECEIPT = range(2)
 (
     ADMIN_CHOOSING,
     MANAGING_EVENTS,
+    VIEWING_EVENT,  # New state for the detailed event view
     GETTING_EVENT_NAME,
     GETTING_EVENT_DATE,
     GETTING_REMINDERS,
-) = range(2, 7)
+) = range(2, 8)
 
 
 # --- Network Configuration ---

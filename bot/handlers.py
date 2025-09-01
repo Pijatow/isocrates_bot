@@ -24,17 +24,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     logger.info(f"User {user.id} ({user.username}) started the bot.")
 
-    db.add_or_update_user(
-        user_id=user.id, username=user.username, first_name=user.first_name
-    )
-
+    # Find inviter if a referral code is used
+    inviter_id = None
     if context.args:
         referral_code = context.args[0]
-        inviter_id = db.process_referral(
-            inviter_code=referral_code, new_user_id=user.id
-        )
+        inviter_id = db.find_user_by_referral_code(referral_code)
         if inviter_id:
             logger.info(f"Referral successful: {user.id} was invited by {inviter_id}")
+
+    # Add or update the user in the database, including who invited them
+    db.add_or_update_user(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        invited_by=inviter_id,
+    )
 
     active_event = db.get_active_event()
     if not active_event:
@@ -43,7 +47,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ConversationHandler.END
 
-    _, event_name = active_event
+    # Correctly access the event name by key
+    event_name = active_event["name"]
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
     await update.message.reply_text(
         f"Welcome to the Isocrates event bot!\n\n"
@@ -75,7 +80,8 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return ConversationHandler.END
 
-    event_id, _ = active_event
+    # Correctly access the event ID by key
+    event_id = active_event["event_id"]
 
     if EVENT_IS_PAID:
         db.create_registration(
@@ -112,7 +118,9 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return ConversationHandler.END
 
-    event_id, event_name = active_event
+    # Correctly access event details by key
+    event_id = active_event["event_id"]
+    event_name = active_event["name"]
     db.add_receipt_to_registration(
         user_id=user.id, event_id=event_id, receipt_file_id=photo.file_id
     )
