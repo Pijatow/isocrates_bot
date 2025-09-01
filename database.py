@@ -1,12 +1,13 @@
 import sqlite3
 import logging
+import secrets
 from config import DATABASE_NAME
 
 logger = logging.getLogger()
 
 
 def init_db():
-    """Initializes the database and creates tables if they don't exist."""
+    """Initializes the database and adds new columns for the referral system."""
     try:
         con = sqlite3.connect(DATABASE_NAME)
         cur = con.cursor()
@@ -14,10 +15,23 @@ def init_db():
             """
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
+                referral_code TEXT UNIQUE, invited_by_user_id INTEGER,
+                referral_count INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        # --- Add new columns if they don't exist (for backward compatibility) ---
+        for col in ["referral_code", "invited_by_user_id", "referral_count"]:
+            try:
+                cur.execute(f"ALTER TABLE users ADD COLUMN {col}")
+                if col == "referral_count":
+                    cur.execute(
+                        "UPDATE users SET referral_count = 0 WHERE referral_count IS NULL"
+                    )
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS registrations (
@@ -37,20 +51,75 @@ def init_db():
 
 
 def add_or_update_user(user_id: int, username: str, first_name: str):
-    """Adds or updates a user in the database."""
+    """Adds a new user or updates info. Generates a referral code if one doesn't exist."""
     con = sqlite3.connect(DATABASE_NAME)
     cur = con.cursor()
-    cur.execute(
-        """
-        INSERT INTO users (user_id, username, first_name) VALUES (?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name
-        """,
-        (user_id, username, first_name),
-    )
+    # Check if user exists
+    cur.execute("SELECT referral_code FROM users WHERE user_id = ?", (user_id,))
+    result = cur.fetchone()
+    if not result or not result[0]:
+        referral_code = secrets.token_urlsafe(6)
+        cur.execute(
+            """
+            INSERT INTO users (user_id, username, first_name, referral_code) VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username=excluded.username,
+                first_name=excluded.first_name,
+                referral_code=COALESCE(users.referral_code, excluded.referral_code)
+            """,
+            (user_id, username, first_name, referral_code),
+        )
+    else:
+        # Just update username and first name
+        cur.execute(
+            "UPDATE users SET username = ?, first_name = ? WHERE user_id = ?",
+            (username, first_name, user_id),
+        )
     con.commit()
     con.close()
 
 
+def process_referral(inviter_code: str, new_user_id: int):
+    """Processes a referral, linking the new user to the inviter."""
+    con = sqlite3.connect(DATABASE_NAME)
+    cur = con.cursor()
+    # Find the inviter by their referral code
+    cur.execute("SELECT user_id FROM users WHERE referral_code = ?", (inviter_code,))
+    inviter = cur.fetchone()
+
+    if inviter:
+        inviter_id = inviter[0]
+        # Link the new user to the inviter and increment the inviter's referral count
+        cur.execute(
+            "UPDATE users SET invited_by_user_id = ? WHERE user_id = ?",
+            (inviter_id, new_user_id),
+        )
+        cur.execute(
+            "UPDATE users SET referral_count = referral_count + 1 WHERE user_id = ?",
+            (inviter_id,),
+        )
+        con.commit()
+        logger.info(
+            f"User {new_user_id} was successfully referred by user {inviter_id}."
+        )
+        return inviter_id
+    con.close()
+    return None
+
+
+def get_user_referral_info(user_id: int):
+    """Fetches a user's referral code and count."""
+    con = sqlite3.connect(DATABASE_NAME)
+    cur = con.cursor()
+    cur.execute(
+        "SELECT referral_code, referral_count FROM users WHERE user_id = ?", (user_id,)
+    )
+    result = cur.fetchone()
+    con.close()
+    return result
+
+
+# --- Other database functions remain unchanged ---
 def create_registration(user_id: int, status: str, receipt_file_id: str = None):
     """Creates a new registration record."""
     con = sqlite3.connect(DATABASE_NAME)
@@ -65,12 +134,9 @@ def create_registration(user_id: int, status: str, receipt_file_id: str = None):
 
 
 def add_receipt_to_registration(user_id: int, receipt_file_id: str):
-    """
-    Finds the most recent pending registration for a user and adds the receipt file_id.
-    """
+    """Finds the most recent pending registration for a user and adds the receipt file_id."""
     con = sqlite3.connect(DATABASE_NAME)
     cur = con.cursor()
-    # We update the most recent pending registration that doesn't have a receipt yet.
     cur.execute(
         """
         UPDATE registrations

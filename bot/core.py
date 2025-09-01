@@ -50,6 +50,9 @@ def run_bot() -> None:
     )
     application.add_handler(conv_handler)
 
+    # --- Other User Commands ---
+    application.add_handler(CommandHandler("myreferral", handlers.my_referral))
+
     # --- Admin Handlers ---
     application.add_handler(CommandHandler("admin", admin.admin_panel))
     application.add_handler(

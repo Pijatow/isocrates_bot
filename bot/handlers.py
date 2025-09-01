@@ -3,7 +3,13 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler, filters
 import database as db
 from .utils import retry_on_network_error
-from config import EVENT_IS_PAID, AWAITING_RECEIPT, ADMIN_CHAT_ID, CHOOSING
+from config import (
+    EVENT_IS_PAID,
+    AWAITING_RECEIPT,
+    ADMIN_CHAT_ID,
+    CHOOSING,
+    BOT_USERNAME,
+)
 
 logger = logging.getLogger("UserMessages")
 app_logger = logging.getLogger()
@@ -12,14 +18,26 @@ app_logger = logging.getLogger()
 @retry_on_network_error
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Starts the conversation and saves/updates user info in the database.
+    Starts the conversation, saves user info, and handles referral links.
     """
     user = update.effective_user
     logger.info(f"User {user.id} ({user.username}) started the bot.")
 
+    # Add or update the user in the database first
     db.add_or_update_user(
         user_id=user.id, username=user.username, first_name=user.first_name
     )
+
+    # --- Handle Referral Logic ---
+    if context.args:
+        referral_code = context.args[0]
+        inviter_id = db.process_referral(
+            inviter_code=referral_code, new_user_id=user.id
+        )
+        if inviter_id:
+            logger.info(f"Referral successful: {user.id} was invited by {inviter_id}")
+            # You can optionally notify the new user they were invited
+            # await update.message.reply_text("You were invited! You'll get a discount.")
 
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
     await update.message.reply_text(
@@ -31,10 +49,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 @retry_on_network_error
+async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays the user's unique referral link and their referral count."""
+    user = update.effective_user
+    referral_info = db.get_user_referral_info(user.id)
+    if referral_info:
+        referral_code, referral_count = referral_info
+        referral_link = f"https://t.me/{BOT_USERNAME}?start={referral_code}"
+        message = (
+            f"Your personal invitation link is:\n`{referral_link}`\n\n"
+            f"Share this link with your friends. You have successfully invited {referral_count} people so far!"
+        )
+        # Using Markdown for the link requires escaping, so we send it plain for simplicity.
+        await update.message.reply_text(
+            f"Your personal invitation link is:\n{referral_link}\n\n"
+            f"Share this link with your friends. You have successfully invited {referral_count} people so far!"
+        )
+    else:
+        await update.message.reply_text("Could not retrieve your referral information.")
+
+
+# --- Other handlers remain unchanged ---
+
+
+@retry_on_network_error
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Handles the registration choice and creates a database record accordingly.
-    """
+    """Handles the registration choice and creates a database record accordingly."""
     user = update.effective_user
     user_choice = update.message.text
     logger.info(f"User {user.id} chose: '{user_choice}'.")
@@ -46,7 +86,6 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
     if EVENT_IS_PAID:
-        # Create the initial pending record. The receipt will be added later.
         db.create_registration(user_id=user.id, status="pending_verification")
         await update.message.reply_text(
             "To complete your registration, please make a payment of $10.00 to:\n\n"
@@ -57,7 +96,6 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return AWAITING_RECEIPT
     else:
-        # For free events, confirm immediately.
         db.create_registration(user_id=user.id, status="confirmed")
         await update.message.reply_text(
             "Great! You are now registered for this free event. See you there!",
@@ -68,14 +106,11 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 @retry_on_network_error
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Handles the receipt, UPDATES the database record, and forwards to admin.
-    """
+    """Handles the receipt, updates the database record, and forwards to admin."""
     user = update.effective_user
     photo = update.message.photo[-1]
     logger.info(f"User {user.id} submitted a receipt (file_id: {photo.file_id}).")
 
-    # CORRECT: Update the existing registration with the receipt file ID.
     db.add_receipt_to_registration(user_id=user.id, receipt_file_id=photo.file_id)
 
     caption = (
@@ -99,9 +134,7 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 @retry_on_network_error
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Cancels the conversation.
-    """
+    """Cancels the conversation."""
     user = update.effective_user
     logger.info(f"User {user.id} cancelled the conversation.")
     await update.message.reply_text(
