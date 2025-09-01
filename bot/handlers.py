@@ -1,5 +1,11 @@
+import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
+
+# Get the specific logger for user messages
+logger = logging.getLogger("UserMessages")
+# Get the root logger for general app logic
+app_logger = logging.getLogger()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -7,6 +13,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     Starts the conversation and asks the user if they want to register for the event.
     This is the entry point for the main conversation.
     """
+    user = update.effective_user
+    logger.info(f"User {user.id} ({user.username}) started the bot with /start.")
+
     # Define the keyboard buttons
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
 
@@ -31,7 +40,9 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     Handles the user's decision to register or not.
     This is where we will later add logic for paid vs. free events.
     """
+    user = update.effective_user
     user_choice = update.message.text
+    logger.info(f"User {user.id} ({user.username}) made a choice: '{user_choice}'.")
 
     if user_choice == "Yes, Register Me!":
         # Placeholder for the real registration logic
@@ -39,6 +50,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "Great! You are now registered. (Simple logic for now).",
             reply_markup=ReplyKeyboardRemove(),
         )
+        app_logger.info(f"User {user.id} completed a registration (placeholder).")
         # End the conversation
         return ConversationHandler.END
     else:
@@ -54,6 +66,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     Cancels and ends the current conversation.
     Provides a way for the user to exit the registration flow at any time.
     """
+    user = update.effective_user
+    logger.info(f"User {user.id} ({user.username}) cancelled the conversation.")
 
     await update.message.reply_text(
         "Registration cancelled.", reply_markup=ReplyKeyboardRemove()
