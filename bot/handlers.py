@@ -9,6 +9,7 @@ from config import (
     ADMIN_CHAT_ID,
     CHOOSING,
     BOT_USERNAME,
+    ADMIN_USER_IDS,
 )
 
 logger = logging.getLogger("UserMessages")
@@ -23,12 +24,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     logger.info(f"User {user.id} ({user.username}) started the bot.")
 
-    # Add or update the user in the database first
     db.add_or_update_user(
         user_id=user.id, username=user.username, first_name=user.first_name
     )
 
-    # --- Handle Referral Logic ---
     if context.args:
         referral_code = context.args[0]
         inviter_id = db.process_referral(
@@ -36,45 +35,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         if inviter_id:
             logger.info(f"Referral successful: {user.id} was invited by {inviter_id}")
-            # You can optionally notify the new user they were invited
-            # await update.message.reply_text("You were invited! You'll get a discount.")
 
+    active_event = db.get_active_event()
+    if not active_event:
+        await update.message.reply_text(
+            "There are no active events open for registration right now. Please check back later!"
+        )
+        return ConversationHandler.END
+
+    _, event_name = active_event
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
     await update.message.reply_text(
-        "Welcome to the Isocrates event bot!\n\n"
-        "This weekend's event is now open for registration. Would you like to sign up?",
+        f"Welcome to the Isocrates event bot!\n\n"
+        f"The event '{event_name}' is now open for registration. Would you like to sign up?",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True),
     )
     return CHOOSING
 
 
 @retry_on_network_error
-async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays the user's unique referral link and their referral count."""
-    user = update.effective_user
-    referral_info = db.get_user_referral_info(user.id)
-    if referral_info:
-        referral_code, referral_count = referral_info
-        referral_link = f"https://t.me/{BOT_USERNAME}?start={referral_code}"
-        message = (
-            f"Your personal invitation link is:\n`{referral_link}`\n\n"
-            f"Share this link with your friends. You have successfully invited {referral_count} people so far!"
-        )
-        # Using Markdown for the link requires escaping, so we send it plain for simplicity.
-        await update.message.reply_text(
-            f"Your personal invitation link is:\n{referral_link}\n\n"
-            f"Share this link with your friends. You have successfully invited {referral_count} people so far!"
-        )
-    else:
-        await update.message.reply_text("Could not retrieve your referral information.")
-
-
-# --- Other handlers remain unchanged ---
-
-
-@retry_on_network_error
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the registration choice and creates a database record accordingly."""
+    """
+    Handles the registration choice and creates a database record for the active event.
+    """
     user = update.effective_user
     user_choice = update.message.text
     logger.info(f"User {user.id} chose: '{user_choice}'.")
@@ -85,8 +68,19 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return ConversationHandler.END
 
+    active_event = db.get_active_event()
+    if not active_event:
+        await update.message.reply_text(
+            "Sorry, the event registration just closed. Please check back later."
+        )
+        return ConversationHandler.END
+
+    event_id, _ = active_event
+
     if EVENT_IS_PAID:
-        db.create_registration(user_id=user.id, status="pending_verification")
+        db.create_registration(
+            user_id=user.id, event_id=event_id, status="pending_verification"
+        )
         await update.message.reply_text(
             "To complete your registration, please make a payment of $10.00 to:\n\n"
             "Bank: Isocrates Bank\n"
@@ -96,7 +90,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return AWAITING_RECEIPT
     else:
-        db.create_registration(user_id=user.id, status="confirmed")
+        db.create_registration(user_id=user.id, event_id=event_id, status="confirmed")
         await update.message.reply_text(
             "Great! You are now registered for this free event. See you there!",
             reply_markup=ReplyKeyboardRemove(),
@@ -106,30 +100,83 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 @retry_on_network_error
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the receipt, updates the database record, and forwards to admin."""
+    """Handles the receipt, updates the database record for the active event, and forwards to admin."""
     user = update.effective_user
     photo = update.message.photo[-1]
     logger.info(f"User {user.id} submitted a receipt (file_id: {photo.file_id}).")
 
-    db.add_receipt_to_registration(user_id=user.id, receipt_file_id=photo.file_id)
+    active_event = db.get_active_event()
+    if not active_event:
+        await update.message.reply_text(
+            "Sorry, we can't accept this receipt as the event registration is closed."
+        )
+        return ConversationHandler.END
+
+    event_id, event_name = active_event
+    db.add_receipt_to_registration(
+        user_id=user.id, event_id=event_id, receipt_file_id=photo.file_id
+    )
 
     caption = (
-        f"New payment receipt from user: {user.full_name}\n"
-        f"Username: @{user.username}\n"
-        f"User ID: {user.id}\n\n"
-        "Please verify and approve their registration."
+        f"New payment receipt for event: '{event_name}'\n"
+        f"From user: {user.full_name} (@{user.username})\n"
+        f"User ID: {user.id}"
     )
     await context.bot.send_photo(
         chat_id=ADMIN_CHAT_ID, photo=photo.file_id, caption=caption
     )
-    app_logger.info(f"Receipt from user {user.id} forwarded to admin.")
+    app_logger.info(
+        f"Receipt from user {user.id} for event {event_id} forwarded to admin."
+    )
 
     await update.message.reply_text(
-        "Thank you! We have received your receipt.\n"
-        "An admin will verify it shortly. You will receive a confirmation message once approved.",
+        "Thank you! Your receipt has been submitted for verification.",
         reply_markup=ReplyKeyboardRemove(),
     )
     return ConversationHandler.END
+
+
+# --- Unchanged Handlers ---
+
+
+@retry_on_network_error
+async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays the user's unique referral link and their referral count."""
+    user = update.effective_user
+    referral_info = db.get_user_referral_info(user.id)
+    if referral_info:
+        referral_code, referral_count = referral_info
+        referral_link = f"https://t.me/{BOT_USERNAME}?start={referral_code}"
+        await update.message.reply_text(
+            f"Your personal invitation link is:\n{referral_link}\n\n"
+            f"Share this link with your friends. You have successfully invited {referral_count} people so far!"
+        )
+    else:
+        await update.message.reply_text("Could not retrieve your referral information.")
+
+
+@retry_on_network_error
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays a versatile help message for users and admins."""
+    user = update.effective_user
+    user_help_text = (
+        "Here are the available commands:\n\n"
+        "/start - Begins the registration process for the next event.\n"
+        "/myreferral - Get your unique link to invite friends.\n"
+        "/cancel - Stops any active process, like registration.\n"
+        "/help - Shows this help message."
+    )
+    admin_help_text = (
+        "--- ADMIN HELP ---\n"
+        "You have access to all user commands plus the following:\n\n"
+        "/admin - Opens the main admin control panel.\n"
+        "  • From the panel, you can view pending registrations and manage events."
+    )
+    if user.id in ADMIN_USER_IDS:
+        full_help_text = user_help_text + "\n\n" + admin_help_text
+        await update.message.reply_text(full_help_text)
+    else:
+        await update.message.reply_text(user_help_text)
 
 
 @retry_on_network_error

@@ -5,34 +5,43 @@ load_dotenv()
 
 # --- Telegram Bot Configuration ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
-
-# The bot's username (without the '@') is needed for referral links
 BOT_USERNAME = os.getenv("BOT_USERNAME")
-if not BOT_USERNAME:
-    raise ValueError("BOT_USERNAME environment variable not set!")
+if not TELEGRAM_BOT_TOKEN or not BOT_USERNAME:
+    raise ValueError("TELEGRAM_BOT_TOKEN and BOT_USERNAME must be set in .env file!")
 
 # --- Admin Configuration ---
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
-if not ADMIN_CHAT_ID:
-    raise ValueError("ADMIN_CHAT_ID environment variable not set!")
-
 admin_ids_str = os.getenv("ADMIN_USER_IDS", "")
-ADMIN_USER_IDS = [
-    int(user_id.strip()) for user_id in admin_ids_str.split(",") if user_id.strip()
-]
-if not ADMIN_USER_IDS:
-    raise ValueError("ADMIN_USER_IDS environment variable not set!")
+ADMIN_USER_IDS = [int(uid.strip()) for uid in admin_ids_str.split(",") if uid.strip()]
+if not ADMIN_CHAT_ID or not ADMIN_USER_IDS:
+    raise ValueError("ADMIN_CHAT_ID and ADMIN_USER_IDS must be set in .env file!")
 
 # --- Database Configuration ---
 DATABASE_NAME = "isocrates.db"
 
-# --- Event Simulation ---
+# --- Event Configuration ---
+# This is now a placeholder; actual event fees will be managed in the database.
 EVENT_IS_PAID = True
+PAYMENT_DETAILS = (
+    "To complete your registration, please make a payment of $10.00 to:\n\n"
+    "Bank: Isocrates Bank\n"
+    "Account: 123-456-789\n\n"
+    "After payment, please upload a clear photo of your receipt."
+)
 
 # --- Conversation States ---
+# User Flow
 CHOOSING, AWAITING_RECEIPT = range(2)
+
+# Admin Flow
+(
+    ADMIN_CHOOSING,
+    MANAGING_EVENTS,
+    GETTING_EVENT_NAME,
+    GETTING_EVENT_DATE,
+    GETTING_REMINDERS,
+) = range(2, 7)
+
 
 # --- Network Configuration ---
 CONNECT_TIMEOUT = 10
