@@ -1,3 +1,5 @@
 .env
 *.db
+logs/*
+*.log
 __pycache__/
