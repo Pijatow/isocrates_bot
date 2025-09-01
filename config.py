@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from a .env file
 load_dotenv()
 
 # --- Telegram Bot Configuration ---
@@ -13,6 +12,15 @@ if not TELEGRAM_BOT_TOKEN:
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 if not ADMIN_CHAT_ID:
     raise ValueError("ADMIN_CHAT_ID environment variable not set!")
+
+# A comma-separated list of user IDs who are authorized as admins
+# In your .env file, it should look like: ADMIN_USER_IDS="12345678,98765432"
+admin_ids_str = os.getenv("ADMIN_USER_IDS", "")
+ADMIN_USER_IDS = [
+    int(user_id.strip()) for user_id in admin_ids_str.split(",") if user_id.strip()
+]
+if not ADMIN_USER_IDS:
+    raise ValueError("ADMIN_USER_IDS environment variable not set!")
 
 # --- Database Configuration ---
 DATABASE_NAME = "isocrates.db"

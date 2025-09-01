@@ -17,7 +17,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     logger.info(f"User {user.id} ({user.username}) started the bot.")
 
-    # Add or update the user in the database
     db.add_or_update_user(
         user_id=user.id, username=user.username, first_name=user.first_name
     )
@@ -47,6 +46,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
     if EVENT_IS_PAID:
+        # Create the initial pending record. The receipt will be added later.
         db.create_registration(user_id=user.id, status="pending_verification")
         await update.message.reply_text(
             "To complete your registration, please make a payment of $10.00 to:\n\n"
@@ -57,6 +57,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return AWAITING_RECEIPT
     else:
+        # For free events, confirm immediately.
         db.create_registration(user_id=user.id, status="confirmed")
         await update.message.reply_text(
             "Great! You are now registered for this free event. See you there!",
@@ -68,16 +69,14 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 @retry_on_network_error
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Handles the receipt, saves the file ID to the database, and forwards to admin.
+    Handles the receipt, UPDATES the database record, and forwards to admin.
     """
     user = update.effective_user
     photo = update.message.photo[-1]
     logger.info(f"User {user.id} submitted a receipt (file_id: {photo.file_id}).")
 
-    # Update the registration record with the receipt file ID
-    db.create_registration(
-        user_id=user.id, status="pending_verification", receipt_file_id=photo.file_id
-    )
+    # CORRECT: Update the existing registration with the receipt file ID.
+    db.add_receipt_to_registration(user_id=user.id, receipt_file_id=photo.file_id)
 
     caption = (
         f"New payment receipt from user: {user.full_name}\n"
