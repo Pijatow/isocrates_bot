@@ -6,23 +6,14 @@ from telegram.ext import (
 )
 import database as db
 from .utils import admin_only
-from config import (
-    MANAGING_EVENTS,
-    VIEWING_EVENT,
-    GETTING_EVENT_NAME,
-    GETTING_EVENT_DESC,
-    GETTING_EVENT_DATE,
-    GETTING_EVENT_IS_PAID,
-    GETTING_PAYMENT_DETAILS,
-    GETTING_REMINDERS,
-    ADMIN_CHOOSING,
-)
+from config import *
 
 logger = logging.getLogger()
 
 
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point for the admin conversation. Shows the main admin panel."""
     message = update.message or update.callback_query.message
     keyboard = [
         [
@@ -46,18 +37,30 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def view_pending_registrations(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
+    """Displays the next pending registration for approval."""
     query = update.callback_query
     await query.answer()
     pending_reg = db.get_next_pending_registration()
     if not pending_reg:
         await query.edit_message_text(text="No pending registrations found.")
         return ConversationHandler.END
-    reg_id, user_id, file_id, username, first_name, event_name = pending_reg
+
+    (
+        reg_id,
+        user_id,
+        file_id,
+        username,
+        first_name,
+        event_name,
+        final_fee,
+        discount_code,
+    ) = pending_reg
     caption = (
-        f"Pending Registration for event: '{event_name}'\n"
+        f"Pending Registration for: '{event_name}'\n"
         f"User: {first_name} (@{username})\n"
         f"User ID: {user_id}\n"
-        f"Registration ID: {reg_id}"
+        f"Fee Paid: ${final_fee:.2f}\n"
+        f"Discount Used: {discount_code or 'None'}"
     )
     keyboard = [
         [
@@ -84,6 +87,7 @@ async def view_pending_registrations(
 async def handle_registration_approval(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
+    """Handles the 'Approve' action from the admin."""
     query = update.callback_query
     await query.answer()
     _, reg_id, user_id = query.data.split("_")
@@ -92,6 +96,7 @@ async def handle_registration_approval(
     await context.bot.send_message(
         chat_id=user_id,
         text=f"Congratulations! Your registration has been approved.\n\nYour unique ticket code is: `{ticket_code}`",
+        parse_mode="Markdown",
     )
 
 
@@ -99,17 +104,19 @@ async def handle_registration_approval(
 async def handle_registration_rejection(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
+    """Handles the 'Reject' action from the admin."""
     query = update.callback_query
     await query.answer()
     _, reg_id, user_id = query.data.split("_")
     db.update_registration_status(int(reg_id), "rejected")
     await query.edit_message_caption(caption=f"❌ Registration {reg_id} rejected.")
     await context.bot.send_message(
-        chat_id=user_id, text="Unfortunately, your registration could not be approved."
+        chat_id=user_id,
+        text="Unfortunately, your registration could not be approved.",
     )
 
 
-# --- Event Management Sub-Conversation ---
+# --- Event Management ---
 @admin_only
 async def manage_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message = update.message or update.callback_query.message
@@ -155,16 +162,31 @@ async def view_event_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("Error: Event not found.")
         return MANAGING_EVENTS
     status = "Active" if event["is_active"] else "Inactive"
-    paid_status = "Paid" if event["is_paid"] else "Free"
+    paid_status = f"Paid (${event['fee']:.2f})" if event["is_paid"] else "Free"
     details_text = (
         f"Event: {event['name']}\n"
         f"Description: {event['description']}\n"
         f"Date: {event['date']}\n"
         f"Type: {paid_status}\n"
-        f"Reminders (hours before): {event['reminders']}\n"
+        f"Reminders: {event['reminders']} hours before\n"
         f"Status: {status}"
     )
-    keyboard = []
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "👥 View Participants", callback_data=f"view_participants_{event_id}"
+            )
+        ],
+    ]
+    # --- LOGIC FIX: Only show discount button for paid events ---
+    if event["is_paid"]:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "💰 Manage Discounts", callback_data=f"manage_discounts_{event_id}"
+                )
+            ]
+        )
     if not event["is_active"]:
         keyboard.append(
             [
@@ -235,9 +257,7 @@ async def get_event_description(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     context.user_data["event_description"] = update.message.text
-    await update.message.reply_text(
-        "Great. Now, please enter the event date and time in YYYY-MM-DD HH:MM format:"
-    )
+    await update.message.reply_text("Enter the event date in YYYY-MM-DD HH:MM format:")
     return GETTING_EVENT_DATE
 
 
@@ -246,13 +266,12 @@ async def get_event_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data["event_date"] = update.message.text
     keyboard = [
         [
-            InlineKeyboardButton("Paid Event", callback_data="paid"),
-            InlineKeyboardButton("Free Event", callback_data="free"),
+            InlineKeyboardButton("Paid", callback_data="paid"),
+            InlineKeyboardButton("Free", callback_data="free"),
         ]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Is this a paid or a free event?", reply_markup=reply_markup
+        "Is this a paid or free event?", reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return GETTING_EVENT_IS_PAID
 
@@ -263,16 +282,20 @@ async def get_event_is_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
     context.user_data["is_paid"] = query.data == "paid"
     if context.user_data["is_paid"]:
-        await query.edit_message_text(
-            "Please enter the payment details (e.g., bank info, price)."
-        )
-        return GETTING_PAYMENT_DETAILS
+        await query.edit_message_text("Please enter the event fee (e.g., 10.50):")
+        return GETTING_EVENT_FEE
     else:
+        context.user_data["fee"] = 0.0
         context.user_data["payment_details"] = None
-        await query.edit_message_text(
-            "Enter the reminder schedule as comma-separated hours (e.g., 24, 1):"
-        )
+        await query.edit_message_text("Enter reminder hours (e.g., 24, 1):")
         return GETTING_REMINDERS
+
+
+@admin_only
+async def get_event_fee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["fee"] = float(update.message.text)
+    await update.message.reply_text("Please enter payment details (e.g., bank info):")
+    return GETTING_PAYMENT_DETAILS
 
 
 @admin_only
@@ -280,9 +303,7 @@ async def get_payment_details(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     context.user_data["payment_details"] = update.message.text
-    await update.message.reply_text(
-        "Enter the reminder schedule as comma-separated hours (e.g., 24, 1):"
-    )
+    await update.message.reply_text("Enter reminder hours (e.g., 24, 1):")
     return GETTING_REMINDERS
 
 
@@ -291,38 +312,184 @@ async def save_event_and_finish(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     context.user_data["reminders"] = update.message.text
-
     try:
         db.create_event(
             name=context.user_data["event_name"],
             description=context.user_data["event_description"],
             date=context.user_data["event_date"],
+            fee=context.user_data["fee"],
             is_paid=context.user_data["is_paid"],
             payment_details=context.user_data.get("payment_details"),
             reminders=context.user_data["reminders"],
         )
         await update.message.reply_text(
-            f"✅ New event '{context.user_data['event_name']}' created and set as active."
+            f"✅ Event '{context.user_data['event_name']}' created."
         )
     except Exception as e:
         logger.error(f"Failed to save event: {e}", exc_info=True)
-        await update.message.reply_text("An error occurred. Please try again.")
+        await update.message.reply_text("An error occurred.")
     finally:
         context.user_data.clear()
-
     return await manage_events(update, context)
 
 
+# --- Participant Viewer ---
+@admin_only
+async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    event_id = int(query.data.split("_")[2])
+    participants = db.get_participants_for_event(event_id)
+    event = db.get_event_by_id(event_id)
+
+    if not participants:
+        text = f"No confirmed participants for '{event['name']}' yet."
+    else:
+        text = f"👥 *Participants for {event['name']} ({len(participants)})*\n\n"
+        for p in participants:
+            discount_info = (
+                f" (Code: {p['discount_code_used']})" if p["discount_code_used"] else ""
+            )
+            text += f"- @{p['username']}{discount_info}\n"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "⬅️ Back to Event Details", callback_data=f"view_event_{event_id}"
+            )
+        ]
+    ]
+    await query.edit_message_text(
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+    )
+    return VIEWING_EVENT
+
+
+# --- Discount Code Management ---
+@admin_only
+async def manage_discounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    event_id = int(query.data.split("_")[2])
+    context.user_data["selected_event_id"] = event_id
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "➕ Create New Discount Code",
+                callback_data=f"create_discount_{event_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⬅️ Back to Event Details", callback_data=f"view_event_{event_id}"
+            )
+        ],
+    ]
+    await query.edit_message_text(
+        "Discount Code Management:", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return MANAGING_DISCOUNTS
+
+
+@admin_only
+async def prompt_for_discount_code(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "Please enter the discount code text (e.g., SUMMER25):"
+    )
+    return GETTING_DISCOUNT_CODE
+
+
+@admin_only
+async def get_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["discount_code"] = update.message.text
+    keyboard = [
+        [
+            InlineKeyboardButton("Percentage %", callback_data="percentage"),
+            InlineKeyboardButton("Fixed Amount $", callback_data="fixed"),
+        ]
+    ]
+    await update.message.reply_text(
+        "What type of discount is this?", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return GETTING_DISCOUNT_TYPE
+
+
+@admin_only
+async def get_discount_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    context.user_data["discount_type"] = query.data
+    prompt = (
+        "Enter the percentage value (e.g., 20 for 20%):"
+        if query.data == "percentage"
+        else "Enter the fixed amount (e.g., 5.50 for $5.50):"
+    )
+    await query.edit_message_text(prompt)
+    return GETTING_DISCOUNT_VALUE
+
+
+@admin_only
+async def get_discount_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["discount_value"] = float(update.message.text)
+    await update.message.reply_text("How many times can this code be used?")
+    return GETTING_DISCOUNT_USES
+
+
+@admin_only
+async def save_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["discount_uses"] = int(update.message.text)
+    event_id = context.user_data["selected_event_id"]
+    try:
+        db.create_discount_code(
+            event_id=event_id,
+            code=context.user_data["discount_code"],
+            discount_type=context.user_data["discount_type"],
+            value=context.user_data["discount_value"],
+            uses_left=context.user_data["discount_uses"],
+        )
+        await update.message.reply_text(
+            f"✅ Discount code '{context.user_data['discount_code']}' created."
+        )
+    except Exception as e:
+        logger.error(f"Failed to save discount code: {e}", exc_info=True)
+        await update.message.reply_text(
+            "An error occurred. This code might already exist for this event."
+        )
+    finally:
+        context.user_data.clear()
+
+    # --- BUG FIX: Removed FakeQuery and now returning to the discount management screen ---
+    # We will reuse the manage_discounts function to show the "create new" and "back" buttons.
+    # To do this, we need to pass a query object that has the correct event_id in its data.
+    class FakeQuery:
+        def __init__(self, msg, data):
+            self.message = msg
+            self.data = data
+
+        async def answer(self):
+            pass
+
+    # Recreate a fake update to call manage_discounts, which expects one
+    fake_update = Update(
+        update.update_id,
+        callback_query=FakeQuery(update.message, f"manage_discounts_{event_id}"),
+    )
+    return await manage_discounts(fake_update, context)
+
+
+# --- General ---
 @admin_only
 async def cancel_admin_conversation(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     if update.callback_query:
         await update.callback_query.answer()
-        message = update.callback_query.message
-        await message.edit_text("Admin action cancelled.")
+        await update.callback_query.message.edit_text("Admin action cancelled.")
     else:
-        message = update.message
-        await message.reply_text("Admin action cancelled.")
+        await update.message.reply_text("Admin action cancelled.")
     context.user_data.clear()
     return ConversationHandler.END

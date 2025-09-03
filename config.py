@@ -21,20 +21,29 @@ DATABASE_NAME = "isocrates.db"
 
 # --- Conversation States ---
 # User Flow
-CHOOSING, AWAITING_RECEIPT = range(2)
+CHOOSING, AWAITING_DISCOUNT_PROMPT, AWAITING_DISCOUNT_CODE, AWAITING_RECEIPT = range(4)
 
-# Admin Flow for creating an event
+# Admin Flow
 (
     ADMIN_CHOOSING,
     MANAGING_EVENTS,
     VIEWING_EVENT,
+    # Event Creation
     GETTING_EVENT_NAME,
     GETTING_EVENT_DESC,
     GETTING_EVENT_DATE,
+    GETTING_EVENT_FEE,
     GETTING_EVENT_IS_PAID,
     GETTING_PAYMENT_DETAILS,
     GETTING_REMINDERS,
-) = range(2, 11)
+    # Discount Creation
+    MANAGING_DISCOUNTS,
+    GETTING_DISCOUNT_CODE,
+    GETTING_DISCOUNT_TYPE,
+    GETTING_DISCOUNT_VALUE,
+    GETTING_DISCOUNT_USES,
+) = range(4, 19)
+
 
 # --- Network Configuration ---
 CONNECT_TIMEOUT = 10

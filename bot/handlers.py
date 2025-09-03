@@ -3,13 +3,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 import database as db
 from .utils import retry_on_network_error
-from config import (
-    AWAITING_RECEIPT,
-    ADMIN_CHAT_ID,
-    CHOOSING,
-    BOT_USERNAME,
-    ADMIN_USER_IDS,
-)
+from config import *
 
 logger = logging.getLogger("UserMessages")
 app_logger = logging.getLogger()
@@ -37,10 +31,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     active_event = db.get_active_event()
     if not active_event:
         await update.message.reply_text(
-            "There are no active events open for registration right now."
+            "There are no active events for registration right now."
         )
         return ConversationHandler.END
 
+    context.user_data["active_event"] = dict(active_event)
     event_name = active_event["name"]
     event_desc = active_event["description"]
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
@@ -69,33 +64,29 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return ConversationHandler.END
 
-    active_event = db.get_active_event()
+    active_event = context.user_data.get("active_event")
     if not active_event:
         await update.message.reply_text("Sorry, event registration just closed.")
         return ConversationHandler.END
 
-    event_id = active_event["event_id"]
     if active_event["is_paid"]:
-        db.create_registration(
-            user_id=user.id, event_id=event_id, status="pending_verification"
-        )
-        payment_details = active_event["payment_details"]
+        reply_keyboard = [["Yes", "No"]]
         await update.message.reply_text(
-            f"To complete your registration, please make the payment as described below:\n\n"
-            f"{payment_details}\n\n"
-            "After payment, please upload a clear photo of your receipt.",
-            reply_markup=ReplyKeyboardRemove(),
+            "Do you have a discount code?",
+            reply_markup=ReplyKeyboardMarkup(
+                reply_keyboard, one_time_keyboard=True, resize_keyboard=True
+            ),
         )
-        return AWAITING_RECEIPT
-    else:
-        # For free events, we create the registration and then immediately finalize it to get a ticket.
-        db.create_registration(user_id=user.id, event_id=event_id, status="confirmed")
-
-        # Now, get the ID of the record we just created.
-        reg_id = db.get_last_registration_id(user.id, event_id)
-
+        return AWAITING_DISCOUNT_PROMPT
+    else:  # Free event
+        db.create_registration(
+            user_id=user.id,
+            event_id=active_event["event_id"],
+            status="confirmed",
+            final_fee=0.0,
+        )
+        reg_id = db.get_last_registration_id(user.id, active_event["event_id"])
         if reg_id:
-            # Finalize the registration to generate and save the ticket code.
             ticket_code = db.update_registration_status(reg_id, "confirmed")
             await update.message.reply_text(
                 "Great! You are now registered for this free event. See you there!\n\n"
@@ -104,49 +95,123 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 parse_mode="Markdown",
             )
         else:
-            # This is a fallback in case something goes wrong.
             await update.message.reply_text(
-                "Great! You are now registered for this free event. Your ticket will be sent shortly.",
+                "You are registered for this free event!",
                 reply_markup=ReplyKeyboardRemove(),
             )
         return ConversationHandler.END
 
 
 @retry_on_network_error
+async def handle_discount_prompt(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handles user's response to whether they have a discount code."""
+    user_choice = update.message.text
+    active_event = context.user_data.get("active_event")
+
+    if user_choice == "Yes":
+        await update.message.reply_text(
+            "Please enter your discount code:", reply_markup=ReplyKeyboardRemove()
+        )
+        return AWAITING_DISCOUNT_CODE
+    else:
+        context.user_data["final_fee"] = active_event["fee"]
+        context.user_data["discount_code"] = None
+
+        await update.message.reply_text(
+            f"The total fee is ${active_event['fee']:.2f}.\n\n"
+            f"Please make the payment as described below:\n\n"
+            f"{active_event['payment_details']}\n\n"
+            "After payment, please upload a clear photo of your receipt.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return AWAITING_RECEIPT
+
+
+@retry_on_network_error
+async def handle_discount_code(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Validates the discount code and calculates the final price."""
+    code = update.message.text
+    active_event = context.user_data.get("active_event")
+
+    discount = db.get_discount_code(active_event["event_id"], code)
+
+    if not discount:
+        await update.message.reply_text(
+            "That code is invalid, has expired, or does not belong to this event. Please try again or type /cancel."
+        )
+        return AWAITING_DISCOUNT_CODE
+
+    original_fee = active_event["fee"]
+    final_fee = original_fee
+
+    if discount["discount_type"] == "percentage":
+        final_fee = original_fee * (1 - discount["value"] / 100)
+    elif discount["discount_type"] == "fixed":
+        final_fee = original_fee - discount["value"]
+
+    final_fee = max(0, final_fee)  # Ensure fee doesn't go below zero
+
+    context.user_data["final_fee"] = final_fee
+    context.user_data["discount_code"] = code
+    context.user_data["discount_code_id"] = discount["code_id"]
+
+    await update.message.reply_text(
+        f"✅ Discount applied! The new fee is ${final_fee:.2f}.\n\n"
+        f"Please make the payment as described below:\n\n"
+        f"{active_event['payment_details']}\n\n"
+        "After payment, please upload a clear photo of your receipt.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return AWAITING_RECEIPT
+
+
+@retry_on_network_error
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     photo = update.message.photo[-1]
-    logger.info(f"User {user.id} submitted a receipt (file_id: {photo.file_id}).")
-    active_event = db.get_active_event()
-    if not active_event:
-        await update.message.reply_text(
-            "Sorry, we can't accept this receipt as event registration is closed."
-        )
-        return ConversationHandler.END
-    event_id = active_event["event_id"]
-    event_name = active_event["name"]
-    db.add_receipt_to_registration(
-        user_id=user.id, event_id=event_id, receipt_file_id=photo.file_id
+    active_event = context.user_data.get("active_event")
+    final_fee = context.user_data.get("final_fee")
+    discount_code = context.user_data.get("discount_code")
+
+    db.create_registration(
+        user_id=user.id,
+        event_id=active_event["event_id"],
+        status="pending_verification",
+        final_fee=final_fee,
+        discount_code=discount_code,
     )
+    db.add_receipt_to_registration(
+        user_id=user.id,
+        event_id=active_event["event_id"],
+        receipt_file_id=photo.file_id,
+    )
+
+    if "discount_code_id" in context.user_data:
+        db.use_discount_code(context.user_data["discount_code_id"])
+
     caption = (
-        f"New payment receipt for event: '{event_name}'\n"
-        f"From user: {user.full_name} (@{user.username})\n"
-        f"User ID: {user.id}"
+        f"New payment receipt for: '{active_event['name']}'\n"
+        f"User: {user.full_name} (@{user.username})\n"
+        f"Fee Paid: ${final_fee:.2f}\n"
+        f"Discount Used: {discount_code or 'None'}"
     )
     await context.bot.send_photo(
         chat_id=ADMIN_CHAT_ID, photo=photo.file_id, caption=caption
     )
-    app_logger.info(
-        f"Receipt from user {user.id} for event {event_id} forwarded to admin."
-    )
+
     await update.message.reply_text(
         "Thank you! Your receipt has been submitted for verification.",
         reply_markup=ReplyKeyboardRemove(),
     )
+    context.user_data.clear()
     return ConversationHandler.END
 
 
-# --- Unchanged Handlers ---
+# --- Other Commands ---
 @retry_on_network_error
 async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -164,21 +229,25 @@ async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @retry_on_network_error
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays a versatile help message for users and admins."""
     user = update.effective_user
+
+    # --- BUG FIX: Replaced placeholder "..." with actual help text ---
     user_help_text = (
         "Here are the available commands:\n\n"
-        "/start - Begins the registration process for the next event.\n"
+        "/start - Begins the registration process for the active event.\n"
         "/myreferral - Get your unique link to invite friends.\n"
         "/cancel - Stops any active process, like registration.\n"
         "/help - Shows this help message."
     )
     admin_help_text = (
-        "--- ADMIN HELP ---\n"
+        "\n\n--- 👑 ADMIN HELP ---\n"
         "You have access to all user commands plus the following:\n\n"
-        "/admin - Opens the main admin control panel."
+        "/admin - Opens the main admin control panel. From there you can manage events, view participants, create discounts, and approve registrations."
     )
+
     if user.id in ADMIN_USER_IDS:
-        full_help_text = user_help_text + "\n\n" + admin_help_text
+        full_help_text = user_help_text + admin_help_text
         await update.message.reply_text(full_help_text)
     else:
         await update.message.reply_text(user_help_text)
@@ -186,9 +255,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @retry_on_network_error
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
-    logger.info(f"User {user.id} cancelled the conversation.")
     await update.message.reply_text(
-        "Registration cancelled.", reply_markup=ReplyKeyboardRemove()
+        "Action cancelled.", reply_markup=ReplyKeyboardRemove()
     )
+    context.user_data.clear()
     return ConversationHandler.END
