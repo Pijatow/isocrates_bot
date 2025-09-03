@@ -18,7 +18,10 @@ from config import (
     MANAGING_EVENTS,
     VIEWING_EVENT,
     GETTING_EVENT_NAME,
+    GETTING_EVENT_DESC,
     GETTING_EVENT_DATE,
+    GETTING_EVENT_IS_PAID,
+    GETTING_PAYMENT_DETAILS,
     GETTING_REMINDERS,
 )
 from . import handlers
@@ -49,8 +52,12 @@ def run_bot() -> None:
         scheduler.check_and_send_reminders, interval=60, first=10
     )
 
+    # Define entry points for conversations
+    user_entry_points = [CommandHandler("start", handlers.start)]
+    admin_entry_points = [CommandHandler("admin", admin.admin_panel)]
+
     admin_conversation_handler = ConversationHandler(
-        entry_points=[CommandHandler("admin", admin.admin_panel)],
+        entry_points=admin_entry_points,
         states={
             ADMIN_CHOOSING: [
                 CallbackQueryHandler(
@@ -77,8 +84,21 @@ def run_bot() -> None:
             GETTING_EVENT_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin.get_event_name)
             ],
+            GETTING_EVENT_DESC: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, admin.get_event_description
+                )
+            ],
             GETTING_EVENT_DATE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin.get_event_date)
+            ],
+            GETTING_EVENT_IS_PAID: [
+                CallbackQueryHandler(admin.get_event_is_paid, pattern="^(paid|free)$")
+            ],
+            GETTING_PAYMENT_DETAILS: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, admin.get_payment_details
+                )
             ],
             GETTING_REMINDERS: [
                 MessageHandler(
@@ -86,11 +106,13 @@ def run_bot() -> None:
                 )
             ],
         },
-        fallbacks=[CommandHandler("cancel", admin.cancel_admin_conversation)],
+        fallbacks=[CommandHandler("cancel", admin.cancel_admin_conversation)]
+        + admin_entry_points,
+        per_message=False,
     )
 
     user_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", handlers.start)],
+        entry_points=user_entry_points,
         states={
             CHOOSING: [
                 MessageHandler(
@@ -100,7 +122,8 @@ def run_bot() -> None:
             ],
             AWAITING_RECEIPT: [MessageHandler(filters.PHOTO, handlers.handle_receipt)],
         },
-        fallbacks=[CommandHandler("cancel", handlers.cancel)],
+        fallbacks=[CommandHandler("cancel", handlers.cancel)] + user_entry_points,
+        per_message=False,
     )
 
     application.add_handler(user_conv_handler)

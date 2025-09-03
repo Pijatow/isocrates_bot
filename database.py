@@ -18,9 +18,12 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS events (
     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    description TEXT,
     date TEXT,
-    reminders TEXT, -- e.g., "24,1" for 24 hours and 1 hour before
-    is_active INTEGER DEFAULT 1, -- 1 for true, 0 for false
+    is_paid INTEGER DEFAULT 0, -- 0 for false, 1 for true
+    payment_details TEXT,
+    reminders TEXT,
+    is_active INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -28,7 +31,8 @@ CREATE TABLE IF NOT EXISTS registrations (
     registration_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
     event_id INTEGER,
-    status TEXT, -- e.g., 'pending_verification', 'confirmed', 'rejected'
+    status TEXT,
+    ticket_code TEXT UNIQUE,
     receipt_file_id TEXT,
     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users (user_id),
@@ -48,17 +52,23 @@ def initialize_database():
     """Creates the database tables if they don't already exist."""
     conn = get_db_connection()
     conn.executescript(SCHEMA)
+    # --- Add new columns if they don't exist (for backward compatibility) ---
+    try:
+        conn.execute("ALTER TABLE events ADD COLUMN description TEXT")
+        conn.execute("ALTER TABLE events ADD COLUMN is_paid INTEGER DEFAULT 0")
+        conn.execute("ALTER TABLE events ADD COLUMN payment_details TEXT")
+        conn.execute("ALTER TABLE registrations ADD COLUMN ticket_code TEXT UNIQUE")
+    except sqlite3.OperationalError:
+        pass  # Columns already exist
     conn.close()
 
 
-# --- User Functions ---
+# --- User Functions (Unchanged) ---
 def add_or_update_user(user_id, username, first_name, invited_by=None):
-    """Adds a new user or updates their info if they already exist."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
-
     if user is None:
         referral_code = str(uuid.uuid4())[:8]
         cursor.execute(
@@ -80,7 +90,6 @@ def add_or_update_user(user_id, username, first_name, invited_by=None):
 
 
 def find_user_by_referral_code(code):
-    """Finds a user's ID by their referral code."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE referral_code = ?", (code,))
@@ -90,7 +99,6 @@ def find_user_by_referral_code(code):
 
 
 def get_user_referral_info(user_id):
-    """Gets a user's referral code and count."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -104,7 +112,6 @@ def get_user_referral_info(user_id):
 
 # --- Registration Functions ---
 def create_registration(user_id, event_id, status, receipt_file_id=None):
-    """Creates a new registration record."""
     conn = get_db_connection()
     conn.execute(
         "INSERT INTO registrations (user_id, event_id, status, receipt_file_id) VALUES (?, ?, ?, ?)",
@@ -114,8 +121,23 @@ def create_registration(user_id, event_id, status, receipt_file_id=None):
     conn.close()
 
 
+def get_last_registration_id(user_id: int, event_id: int) -> int | None:
+    """
+    Gets the ID of the most recent registration for a specific user and event.
+    This is needed to finalize free registrations immediately.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT registration_id FROM registrations WHERE user_id = ? AND event_id = ? ORDER BY registered_at DESC LIMIT 1",
+        (user_id, event_id),
+    )
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+
 def get_next_pending_registration():
-    """Fetches the oldest pending registration that has a receipt."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -135,23 +157,30 @@ def get_next_pending_registration():
 
 
 def update_registration_status(registration_id, new_status):
-    """Updates the status of a specific registration."""
+    """Updates status and generates a ticket code if confirmed."""
     conn = get_db_connection()
-    conn.execute(
-        "UPDATE registrations SET status = ? WHERE registration_id = ?",
-        (new_status, registration_id),
-    )
+    ticket_code = None
+    if new_status == "confirmed":
+        ticket_code = str(uuid.uuid4()).split("-")[0].upper()
+        conn.execute(
+            "UPDATE registrations SET status = ?, ticket_code = ? WHERE registration_id = ?",
+            (new_status, ticket_code, registration_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE registrations SET status = ? WHERE registration_id = ?",
+            (new_status, registration_id),
+        )
     conn.commit()
     conn.close()
+    return ticket_code
 
 
 def add_receipt_to_registration(user_id, event_id, receipt_file_id):
-    """Adds a receipt file ID to a user's pending registration for a specific event."""
     conn = get_db_connection()
     conn.execute(
         """
-        UPDATE registrations
-        SET receipt_file_id = ?
+        UPDATE registrations SET receipt_file_id = ?
         WHERE user_id = ? AND event_id = ? AND status = 'pending_verification'
         """,
         (receipt_file_id, user_id, event_id),
@@ -161,7 +190,6 @@ def add_receipt_to_registration(user_id, event_id, receipt_file_id):
 
 
 def get_confirmed_attendees(event_id):
-    """Gets a list of user IDs for confirmed attendees of an event."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -173,9 +201,8 @@ def get_confirmed_attendees(event_id):
     return attendees
 
 
-# --- Event Functions ---
+# --- Event Functions (Unchanged) ---
 def get_active_event():
-    """Gets the currently active event."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM events WHERE is_active = 1 LIMIT 1")
@@ -184,23 +211,22 @@ def get_active_event():
     return event
 
 
-def create_event(name, date, reminders):
-    """Creates a new event and sets it as the only active one."""
+def create_event(name, description, date, is_paid, payment_details, reminders):
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Deactivate all other events first
     cursor.execute("UPDATE events SET is_active = 0")
-    # Insert the new event
     cursor.execute(
-        "INSERT INTO events (name, date, reminders, is_active) VALUES (?, ?, ?, 1)",
-        (name, date, reminders),
+        """
+        INSERT INTO events (name, description, date, is_paid, payment_details, reminders, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+        """,
+        (name, description, date, is_paid, payment_details, reminders),
     )
     conn.commit()
     conn.close()
 
 
 def get_all_events():
-    """Fetches all events from the database, newest first."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM events ORDER BY created_at DESC")
@@ -210,7 +236,6 @@ def get_all_events():
 
 
 def get_events_with_pending_reminders():
-    """Finds events that have reminders due to be sent."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM events WHERE is_active = 1 AND date IS NOT NULL")
@@ -220,7 +245,6 @@ def get_events_with_pending_reminders():
 
 
 def get_event_by_id(event_id: int):
-    """Fetches a single event by its ID."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM events WHERE event_id = ?", (event_id,))
@@ -230,7 +254,6 @@ def get_event_by_id(event_id: int):
 
 
 def set_active_event(event_id: int):
-    """Sets a specific event as active and deactivates all others."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE events SET is_active = 0")
@@ -240,10 +263,8 @@ def set_active_event(event_id: int):
 
 
 def delete_event_by_id(event_id: int):
-    """Deletes an event and all its associated registrations."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Use a transaction to ensure both operations succeed or fail together
     cursor.execute("BEGIN TRANSACTION")
     try:
         cursor.execute("DELETE FROM registrations WHERE event_id = ?", (event_id,))
