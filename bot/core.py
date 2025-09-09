@@ -166,9 +166,7 @@ def run_bot() -> None:
     application.add_handler(admin_conv_handler)
     application.add_handler(CommandHandler("myreferral", handlers.my_referral))
     application.add_handler(CommandHandler("help", handlers.help_command))
-    application.add_handler(
-        CommandHandler("myticket", handlers.my_ticket)
-    )  # New command
+    application.add_handler(CommandHandler("myticket", handlers.my_ticket))
     application.add_handler(
         CallbackQueryHandler(admin.handle_registration_approval, pattern="^approve_")
     )

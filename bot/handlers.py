@@ -2,7 +2,7 @@ import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 import database as db
-from .utils import retry_on_network_error
+from .utils import retry_on_network_error, format_toman
 from config import *
 
 logger = logging.getLogger("UserMessages")
@@ -38,7 +38,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     context.user_data["active_event"] = dict(active_event)
 
-    # --- BUG FIX: Check for existing registration ---
     existing_registration = db.get_user_registration_for_event(
         user.id, active_event["event_id"]
     )
@@ -131,7 +130,6 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def handle_discount_prompt(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Handles user's response to whether they have a discount code."""
     user_choice = update.message.text
     active_event = context.user_data.get("active_event")
 
@@ -145,7 +143,7 @@ async def handle_discount_prompt(
         context.user_data["discount_code"] = None
 
         await update.message.reply_text(
-            f"The total fee is ${active_event['fee']:.2f}.\n\n"
+            f"The total fee is {format_toman(active_event['fee'])}.\n\n"
             f"Please make the payment as described below:\n\n"
             f"{active_event['payment_details']}\n\n"
             "After payment, please upload a clear photo of your receipt.",
@@ -158,10 +156,8 @@ async def handle_discount_prompt(
 async def handle_discount_code(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Validates the discount code and calculates the final price."""
     code = update.message.text.upper()
     active_event = context.user_data.get("active_event")
-
     discount = db.get_discount_code(active_event["event_id"], code)
 
     if not discount:
@@ -185,7 +181,7 @@ async def handle_discount_code(
     context.user_data["discount_code_id"] = discount["code_id"]
 
     await update.message.reply_text(
-        f"✅ Discount applied! The new fee is ${final_fee:.2f}.\n\n"
+        f"✅ Discount applied! The new fee is {format_toman(final_fee)}.\n\n"
         f"Please make the payment as described below:\n\n"
         f"{active_event['payment_details']}\n\n"
         "After payment, please upload a clear photo of your receipt.",
@@ -221,7 +217,7 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     caption = (
         f"New payment receipt for: '{active_event['name']}'\n"
         f"User: {user.full_name} (@{user.username})\n"
-        f"Fee Paid: ${final_fee:.2f}\n"
+        f"Fee Paid: {format_toman(final_fee)}\n"
         f"Discount Used: {discount_code or 'None'}"
     )
     await context.bot.send_photo(
@@ -239,7 +235,6 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # --- Other Commands ---
 @retry_on_network_error
 async def my_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Allows a user to view their ticket for the active event."""
     user = update.effective_user
     active_event = db.get_active_event()
     if not active_event:
@@ -287,7 +282,6 @@ async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @retry_on_network_error
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Displays a versatile help message for users and admins."""
     user = update.effective_user
     user_help_text = (
         "Here are the available commands:\n\n"

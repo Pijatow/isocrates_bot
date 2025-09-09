@@ -67,16 +67,17 @@ def initialize_database():
     """Creates the database tables and adds new columns if they don't already exist."""
     conn = get_db_connection()
     conn.executescript(SCHEMA)
+    # --- Add new columns for backward compatibility ---
     try:
         conn.execute("ALTER TABLE events ADD COLUMN fee REAL DEFAULT 0.0")
         conn.execute("ALTER TABLE registrations ADD COLUMN discount_code_used TEXT")
         conn.execute("ALTER TABLE registrations ADD COLUMN final_fee REAL")
     except sqlite3.OperationalError:
-        pass
+        pass  # Columns already exist
     conn.close()
 
 
-# --- User Functions (Unchanged) ---
+# --- User Functions ---
 def add_or_update_user(user_id, username, first_name, invited_by=None):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -203,7 +204,11 @@ def add_receipt_to_registration(user_id, event_id, receipt_file_id):
     conn.execute(
         """
         UPDATE registrations SET receipt_file_id = ?
-        WHERE user_id = ? AND event_id = ? AND status = 'pending_verification'
+        WHERE registration_id = (
+            SELECT registration_id FROM registrations
+            WHERE user_id = ? AND event_id = ? AND status = 'pending_verification'
+            ORDER BY registered_at DESC LIMIT 1
+        )
         """,
         (receipt_file_id, user_id, event_id),
     )
@@ -242,7 +247,7 @@ def get_participants_for_event(event_id: int):
     return participants
 
 
-# --- Event Functions (Unchanged) ---
+# --- Event Functions ---
 def get_active_event():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -253,6 +258,7 @@ def get_active_event():
 
 
 def create_event(name, description, date, fee, is_paid, payment_details, reminders):
+    """Creates a new event with detailed information."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE events SET is_active = 0")

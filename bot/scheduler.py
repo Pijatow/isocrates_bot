@@ -8,7 +8,6 @@ logger = logging.getLogger()
 async def check_and_send_reminders(context):
     """
     Checks for upcoming events and sends reminders to confirmed attendees.
-    This function is designed to be run periodically by the JobQueue.
     """
     logger.debug("Scheduler running: Checking for reminders to send.")
     try:
@@ -31,7 +30,6 @@ async def check_and_send_reminders(context):
 
             for hour in reminder_hours:
                 reminder_time = event_date - timedelta(hours=hour)
-                # Check if the reminder time is in the past but within the last minute
                 if now > reminder_time and (now - reminder_time).total_seconds() < 60:
                     attendees = db.get_confirmed_attendees(event_id)
                     logger.info(

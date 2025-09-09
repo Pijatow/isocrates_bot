@@ -5,7 +5,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 import database as db
-from .utils import admin_only
+from .utils import admin_only, format_toman
 from config import *
 
 logger = logging.getLogger()
@@ -14,7 +14,6 @@ logger = logging.getLogger()
 # --- Main Admin Panel ---
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Entry point for the admin conversation. Shows the main admin panel."""
     message = update.message or update.callback_query.message
     keyboard = [
         [
@@ -38,7 +37,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def view_pending_registrations(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Displays the next pending registration for approval."""
     query = update.callback_query
     await query.answer()
     pending_reg = db.get_next_pending_registration()
@@ -60,7 +58,7 @@ async def view_pending_registrations(
         f"Pending Registration for: '{event_name}'\n"
         f"User: {first_name} (@{username})\n"
         f"User ID: {user_id}\n"
-        f"Fee Paid: ${final_fee:.2f}\n"
+        f"Fee Paid: {format_toman(final_fee)}\n"
         f"Discount Used: {discount_code or 'None'}"
     )
     keyboard = [
@@ -88,7 +86,6 @@ async def view_pending_registrations(
 async def handle_registration_approval(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """Handles the 'Approve' action from the admin."""
     query = update.callback_query
     await query.answer()
     _, reg_id, user_id = query.data.split("_")
@@ -105,7 +102,6 @@ async def handle_registration_approval(
 async def handle_registration_rejection(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    """Handles the 'Reject' action from the admin."""
     query = update.callback_query
     await query.answer()
     _, reg_id, user_id = query.data.split("_")
@@ -163,7 +159,7 @@ async def view_event_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("Error: Event not found.")
         return MANAGING_EVENTS
     status = "Active" if event["is_active"] else "Inactive"
-    paid_status = f"Paid (${event['fee']:.2f})" if event["is_paid"] else "Free"
+    paid_status = f"Paid ({format_toman(event['fee'])})" if event["is_paid"] else "Free"
     details_text = (
         f"Event: {event['name']}\n"
         f"Description: {event['description']}\n"
@@ -282,7 +278,7 @@ async def get_event_is_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
     context.user_data["is_paid"] = query.data == "paid"
     if context.user_data["is_paid"]:
-        await query.edit_message_text("Please enter the event fee (e.g., 10.50):")
+        await query.edit_message_text("Please enter the event fee (e.g., 150000):")
         return GETTING_EVENT_FEE
     else:
         context.user_data["fee"] = 0.0
@@ -382,9 +378,9 @@ async def manage_discounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         for code in codes:
             value = (
-                f"{code['value']}%"
+                f"{int(code['value'])}%"
                 if code["discount_type"] == "percentage"
-                else f"${code['value']:.2f}"
+                else format_toman(code["value"])
             )
             button_text = f"'{code['code']}' ({value}) - {code['uses_left']} uses left"
             keyboard.append(
@@ -418,7 +414,6 @@ async def manage_discounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def view_discount_details(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Shows details for a specific discount code and offers a delete option."""
     query = update.callback_query
     await query.answer()
     code_id = int(query.data.split("_")[2])
@@ -432,7 +427,8 @@ async def view_discount_details(
         ],
         [
             InlineKeyboardButton(
-                "⬅️ Back to Discount List", callback_data=f"manage_discounts_{event_id}"
+                "⬅️ Back to Discount List",
+                callback_data=f"manage_discounts_{event_id}",
             )
         ],
     ]
@@ -447,7 +443,6 @@ async def view_discount_details(
 async def delete_discount_action(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Deletes a discount code."""
     query = update.callback_query
     await query.answer()
     code_id = int(query.data.split("_")[2])
@@ -456,8 +451,7 @@ async def delete_discount_action(
     db.delete_discount_code(code_id)
     await query.answer("Discount code deleted.", show_alert=True)
 
-    # Re-call manage_discounts to show the updated list
-    query.data = f"manage_discounts_{event_id}"  # Trick the handler
+    query.data = f"manage_discounts_{event_id}"
     return await manage_discounts(update, context)
 
 
@@ -479,7 +473,7 @@ async def get_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     keyboard = [
         [
             InlineKeyboardButton("Percentage %", callback_data="percentage"),
-            InlineKeyboardButton("Fixed Amount $", callback_data="fixed"),
+            InlineKeyboardButton("Fixed Amount", callback_data="fixed"),
         ]
     ]
     await update.message.reply_text(
@@ -496,7 +490,7 @@ async def get_discount_type(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     prompt = (
         "Enter the percentage value (e.g., 20 for 20%):"
         if query.data == "percentage"
-        else "Enter the fixed amount (e.g., 5.50 for $5.50):"
+        else "Enter the fixed amount (e.g., 50000 for 50,000 Toman):"
     )
     await query.edit_message_text(prompt)
     return GETTING_DISCOUNT_VALUE
@@ -530,8 +524,6 @@ async def save_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "An error occurred. This code might already exist for this event."
         )
 
-    # To go back to the discount list, we need to call manage_discounts.
-    # We'll simulate a callback query for this.
     class FakeQuery:
         def __init__(self, msg, data):
             self.message = msg

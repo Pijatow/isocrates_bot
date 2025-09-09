@@ -7,6 +7,14 @@ from config import MAX_RETRIES, RETRY_DELAY, ADMIN_USER_IDS
 logger = logging.getLogger()
 
 
+def format_toman(amount: float) -> str:
+    """Formats a number as a Toman currency string."""
+    if amount == 0:
+        return "Free"
+    # Format with commas for thousands separator and remove decimals for Toman
+    return f"{int(amount):,} Toman"
+
+
 def admin_only(func):
     """
     A decorator to restrict access to a handler to only authorized admin users.
@@ -53,7 +61,7 @@ def retry_on_network_error(func):
 
                 delay = RETRY_DELAY * (2**attempt)
                 logger.warning(
-                    f"Network error in '{func.__name__}': {e}. Retrying in {delay:.2f} seconds... (Attempt {attempt + 1}/{MAX_RETRIES})"
+                    f"Network error in '{func.__name__}'': {e}. Retrying in {delay:.2f} seconds... (Attempt {attempt + 1}/{MAX_RETRIES})"
                 )
                 await asyncio.sleep(delay)
 
