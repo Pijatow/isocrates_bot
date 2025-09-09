@@ -67,13 +67,12 @@ def initialize_database():
     """Creates the database tables and adds new columns if they don't already exist."""
     conn = get_db_connection()
     conn.executescript(SCHEMA)
-    # --- Add new columns for backward compatibility ---
     try:
         conn.execute("ALTER TABLE events ADD COLUMN fee REAL DEFAULT 0.0")
         conn.execute("ALTER TABLE registrations ADD COLUMN discount_code_used TEXT")
         conn.execute("ALTER TABLE registrations ADD COLUMN final_fee REAL")
     except sqlite3.OperationalError:
-        pass  # Columns already exist
+        pass
     conn.close()
 
 
@@ -125,8 +124,21 @@ def get_user_referral_info(user_id):
 
 
 # --- Registration Functions ---
+def get_user_registration_for_event(user_id: int, event_id: int):
+    """Checks if a user already has a registration for a specific event."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM registrations WHERE user_id = ? AND event_id = ?",
+        (user_id, event_id),
+    )
+    registration = cursor.fetchone()
+    conn.close()
+    return registration
+
+
 def create_registration(user_id, event_id, status, final_fee=None, discount_code=None):
-    """Creates a new registration record, including fee and discount info."""
+    """Creates a new registration record."""
     conn = get_db_connection()
     conn.execute(
         "INSERT INTO registrations (user_id, event_id, status, final_fee, discount_code_used) VALUES (?, ?, ?, ?, ?)",
@@ -230,7 +242,7 @@ def get_participants_for_event(event_id: int):
     return participants
 
 
-# --- Event Functions ---
+# --- Event Functions (Unchanged) ---
 def get_active_event():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -241,7 +253,6 @@ def get_active_event():
 
 
 def create_event(name, description, date, fee, is_paid, payment_details, reminders):
-    """Creates a new event with detailed information."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE events SET is_active = 0")
@@ -309,8 +320,25 @@ def delete_event_by_id(event_id: int):
 
 
 # --- Discount Code Functions ---
+def get_discount_codes_for_event(event_id: int):
+    """Fetches all discount codes for a specific event."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM discount_codes WHERE event_id = ?", (event_id,))
+    codes = cursor.fetchall()
+    conn.close()
+    return codes
+
+
+def delete_discount_code(code_id: int):
+    """Deletes a discount code from the database."""
+    conn = get_db_connection()
+    conn.execute("DELETE FROM discount_codes WHERE code_id = ?", (code_id,))
+    conn.commit()
+    conn.close()
+
+
 def create_discount_code(event_id, code, discount_type, value, uses_left):
-    """Creates a new discount code for a specific event."""
     conn = get_db_connection()
     conn.execute(
         "INSERT INTO discount_codes (event_id, code, discount_type, value, uses_left) VALUES (?, ?, ?, ?, ?)",
@@ -321,7 +349,6 @@ def create_discount_code(event_id, code, discount_type, value, uses_left):
 
 
 def get_discount_code(event_id: int, code: str):
-    """Validates and retrieves a discount code for a specific event."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -334,7 +361,6 @@ def get_discount_code(event_id: int, code: str):
 
 
 def use_discount_code(code_id: int):
-    """Decrements the use count of a discount code."""
     conn = get_db_connection()
     conn.execute(
         "UPDATE discount_codes SET uses_left = uses_left - 1 WHERE code_id = ?",

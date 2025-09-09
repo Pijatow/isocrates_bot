@@ -14,13 +14,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     logger.info(f"User {user.id} ({user.username}) started the bot.")
 
+    # --- User Onboarding ---
     inviter_id = None
     if context.args:
         referral_code = context.args[0]
         inviter_id = db.find_user_by_referral_code(referral_code)
         if inviter_id:
             logger.info(f"Referral successful: {user.id} was invited by {inviter_id}")
-
     db.add_or_update_user(
         user_id=user.id,
         username=user.username,
@@ -28,6 +28,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         invited_by=inviter_id,
     )
 
+    # --- Event and Registration Check ---
     active_event = db.get_active_event()
     if not active_event:
         await update.message.reply_text(
@@ -36,6 +37,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     context.user_data["active_event"] = dict(active_event)
+
+    # --- BUG FIX: Check for existing registration ---
+    existing_registration = db.get_user_registration_for_event(
+        user.id, active_event["event_id"]
+    )
+    if existing_registration:
+        status = existing_registration["status"]
+        if status == "confirmed":
+            ticket = existing_registration["ticket_code"]
+            await update.message.reply_text(
+                f"You are already registered for '{active_event['name']}'! Your ticket code is: `{ticket}`",
+                parse_mode="Markdown",
+            )
+        elif status == "pending_verification":
+            await update.message.reply_text(
+                "You have already submitted a payment for this event. Please wait for an admin to approve it."
+            )
+        elif status == "rejected":
+            await update.message.reply_text(
+                "Your previous registration for this event was rejected. Please contact an admin if you believe this was a mistake."
+            )
+        return ConversationHandler.END
+
+    # --- New Registration Flow ---
     event_name = active_event["name"]
     event_desc = active_event["description"]
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
@@ -134,7 +159,7 @@ async def handle_discount_code(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     """Validates the discount code and calculates the final price."""
-    code = update.message.text
+    code = update.message.text.upper()
     active_event = context.user_data.get("active_event")
 
     discount = db.get_discount_code(active_event["event_id"], code)
@@ -153,7 +178,7 @@ async def handle_discount_code(
     elif discount["discount_type"] == "fixed":
         final_fee = original_fee - discount["value"]
 
-    final_fee = max(0, final_fee)  # Ensure fee doesn't go below zero
+    final_fee = max(0, final_fee)
 
     context.user_data["final_fee"] = final_fee
     context.user_data["discount_code"] = code
@@ -213,6 +238,39 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # --- Other Commands ---
 @retry_on_network_error
+async def my_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allows a user to view their ticket for the active event."""
+    user = update.effective_user
+    active_event = db.get_active_event()
+    if not active_event:
+        await update.message.reply_text("There are no active events right now.")
+        return
+
+    registration = db.get_user_registration_for_event(user.id, active_event["event_id"])
+    if not registration:
+        await update.message.reply_text(
+            f"You are not registered for the event '{active_event['name']}'. Use /start to begin."
+        )
+        return
+
+    status = registration["status"]
+    if status == "confirmed":
+        ticket = registration["ticket_code"]
+        await update.message.reply_text(
+            f"You are confirmed for '{active_event['name']}'!\n\nYour ticket code is: `{ticket}`",
+            parse_mode="Markdown",
+        )
+    elif status == "pending_verification":
+        await update.message.reply_text(
+            "Your registration is still pending. Please wait for an admin to approve it."
+        )
+    elif status == "rejected":
+        await update.message.reply_text(
+            "Your registration for this event was rejected. Please contact an admin."
+        )
+
+
+@retry_on_network_error
 async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     referral_info = db.get_user_referral_info(user.id)
@@ -231,19 +289,18 @@ async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays a versatile help message for users and admins."""
     user = update.effective_user
-
-    # --- BUG FIX: Replaced placeholder "..." with actual help text ---
     user_help_text = (
         "Here are the available commands:\n\n"
-        "/start - Begins the registration process for the active event.\n"
+        "/start - Register for the active event.\n"
+        "/myticket - View your ticket for the active event.\n"
         "/myreferral - Get your unique link to invite friends.\n"
-        "/cancel - Stops any active process, like registration.\n"
+        "/cancel - Stop any active process, like registration.\n"
         "/help - Shows this help message."
     )
     admin_help_text = (
         "\n\n--- 👑 ADMIN HELP ---\n"
-        "You have access to all user commands plus the following:\n\n"
-        "/admin - Opens the main admin control panel. From there you can manage events, view participants, create discounts, and approve registrations."
+        "You have access to all user commands plus:\n\n"
+        "/admin - Open the main admin control panel."
     )
 
     if user.id in ADMIN_USER_IDS:

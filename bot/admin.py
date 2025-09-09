@@ -11,6 +11,7 @@ from config import *
 logger = logging.getLogger()
 
 
+# --- Main Admin Panel ---
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point for the admin conversation. Shows the main admin panel."""
@@ -178,7 +179,6 @@ async def view_event_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
         ],
     ]
-    # --- LOGIC FIX: Only show discount button for paid events ---
     if event["is_paid"]:
         keyboard.append(
             [
@@ -372,23 +372,93 @@ async def manage_discounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.answer()
     event_id = int(query.data.split("_")[2])
     context.user_data["selected_event_id"] = event_id
-    keyboard = [
+
+    codes = db.get_discount_codes_for_event(event_id)
+    keyboard = []
+    text = f"💰 Discount Codes for '{db.get_event_by_id(event_id)['name']}'\n\n"
+
+    if not codes:
+        text += "No discount codes created yet."
+    else:
+        for code in codes:
+            value = (
+                f"{code['value']}%"
+                if code["discount_type"] == "percentage"
+                else f"${code['value']:.2f}"
+            )
+            button_text = f"'{code['code']}' ({value}) - {code['uses_left']} uses left"
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        button_text, callback_data=f"view_discount_{code['code_id']}"
+                    )
+                ]
+            )
+
+    keyboard.append(
         [
             InlineKeyboardButton(
-                "➕ Create New Discount Code",
-                callback_data=f"create_discount_{event_id}",
+                "➕ Create New Code", callback_data=f"create_discount_{event_id}"
             )
-        ],
+        ]
+    )
+    keyboard.append(
         [
             InlineKeyboardButton(
                 "⬅️ Back to Event Details", callback_data=f"view_event_{event_id}"
             )
+        ]
+    )
+
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return MANAGING_DISCOUNTS
+
+
+@admin_only
+async def view_discount_details(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Shows details for a specific discount code and offers a delete option."""
+    query = update.callback_query
+    await query.answer()
+    code_id = int(query.data.split("_")[2])
+    event_id = context.user_data["selected_event_id"]
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🗑️ Delete this Code", callback_data=f"delete_code_{code_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⬅️ Back to Discount List", callback_data=f"manage_discounts_{event_id}"
+            )
         ],
     ]
     await query.edit_message_text(
-        "Discount Code Management:", reply_markup=InlineKeyboardMarkup(keyboard)
+        "Are you sure you want to delete this discount code?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
-    return MANAGING_DISCOUNTS
+    return DELETING_DISCOUNT
+
+
+@admin_only
+async def delete_discount_action(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Deletes a discount code."""
+    query = update.callback_query
+    await query.answer()
+    code_id = int(query.data.split("_")[2])
+    event_id = context.user_data["selected_event_id"]
+
+    db.delete_discount_code(code_id)
+    await query.answer("Discount code deleted.", show_alert=True)
+
+    # Re-call manage_discounts to show the updated list
+    query.data = f"manage_discounts_{event_id}"  # Trick the handler
+    return await manage_discounts(update, context)
 
 
 @admin_only
@@ -405,7 +475,7 @@ async def prompt_for_discount_code(
 
 @admin_only
 async def get_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["discount_code"] = update.message.text
+    context.user_data["discount_code"] = update.message.text.upper()
     keyboard = [
         [
             InlineKeyboardButton("Percentage %", callback_data="percentage"),
@@ -459,12 +529,9 @@ async def save_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             "An error occurred. This code might already exist for this event."
         )
-    finally:
-        context.user_data.clear()
 
-    # --- BUG FIX: Removed FakeQuery and now returning to the discount management screen ---
-    # We will reuse the manage_discounts function to show the "create new" and "back" buttons.
-    # To do this, we need to pass a query object that has the correct event_id in its data.
+    # To go back to the discount list, we need to call manage_discounts.
+    # We'll simulate a callback query for this.
     class FakeQuery:
         def __init__(self, msg, data):
             self.message = msg
@@ -473,11 +540,11 @@ async def save_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
         async def answer(self):
             pass
 
-    # Recreate a fake update to call manage_discounts, which expects one
     fake_update = Update(
         update.update_id,
         callback_query=FakeQuery(update.message, f"manage_discounts_{event_id}"),
     )
+    context.user_data.clear()
     return await manage_discounts(fake_update, context)
 
 

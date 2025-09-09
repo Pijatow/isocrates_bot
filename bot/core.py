@@ -67,7 +67,6 @@ def run_bot() -> None:
                     admin.view_participants, pattern="^view_participants_"
                 ),
                 CallbackQueryHandler(admin.manage_events, pattern="^manage_events$"),
-                # --- BUG FIX: Added handler for the "Back to Event Details" button ---
                 CallbackQueryHandler(admin.view_event_details, pattern="^view_event_"),
             ],
             GETTING_EVENT_NAME: [
@@ -101,7 +100,18 @@ def run_bot() -> None:
                 CallbackQueryHandler(
                     admin.prompt_for_discount_code, pattern="^create_discount_"
                 ),
+                CallbackQueryHandler(
+                    admin.view_discount_details, pattern="^view_discount_"
+                ),
                 CallbackQueryHandler(admin.view_event_details, pattern="^view_event_"),
+            ],
+            DELETING_DISCOUNT: [
+                CallbackQueryHandler(
+                    admin.delete_discount_action, pattern="^delete_code_"
+                ),
+                CallbackQueryHandler(
+                    admin.manage_discounts, pattern="^manage_discounts_"
+                ),
             ],
             GETTING_DISCOUNT_CODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin.get_discount_code)
@@ -156,6 +166,9 @@ def run_bot() -> None:
     application.add_handler(admin_conv_handler)
     application.add_handler(CommandHandler("myreferral", handlers.my_referral))
     application.add_handler(CommandHandler("help", handlers.help_command))
+    application.add_handler(
+        CommandHandler("myticket", handlers.my_ticket)
+    )  # New command
     application.add_handler(
         CallbackQueryHandler(admin.handle_registration_approval, pattern="^approve_")
     )
