@@ -93,8 +93,7 @@ async def handle_registration_approval(
     await query.edit_message_caption(caption=f"✅ Registration {reg_id} approved.")
     await context.bot.send_message(
         chat_id=user_id,
-        text=f"Congratulations! Your registration has been approved.\n\nYour unique ticket code is: `{ticket_code}`",
-        parse_mode="Markdown",
+        text=f"Congratulations! Your registration has been approved.\n\nYour unique ticket code is: {ticket_code}",
     )
 
 
@@ -293,8 +292,8 @@ async def get_event_is_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def get_event_fee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["fee"] = float(update.message.text)
     await update.message.reply_text(
-        "Please enter the full payment instructions. You can use the placeholder `{final_fee}` to show the calculated price.\n\n"
-        "Example:\n`Please pay {final_fee} to account 12345.`"
+        "Please enter the full payment instructions. You can use the placeholder '{final_fee}' to show the calculated price.\n\n"
+        "Example:\nPlease pay {final_fee} to account 12345."
     )
     return GETTING_PAYMENT_DETAILS
 
@@ -343,14 +342,16 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     participants = db.get_participants_for_event(event_id)
     event = db.get_event_by_id(event_id)
 
+    event_name = event["name"]
+
     if not participants:
-        text = f"No confirmed participants for '{event['name']}' yet."
+        text = f"No confirmed participants for '{event_name}' yet."
     else:
-        text = f"👥 *Participants for {event['name']} ({len(participants)})*\n\n"
+        text = f"Participants for {event_name} ({len(participants)}):\n\n"
         for p in participants:
-            discount_info = (
-                f" (Code: {p['discount_code_used']})" if p["discount_code_used"] else ""
-            )
+            discount_info = ""
+            if p["discount_code_used"]:
+                discount_info = f" (Code: {p['discount_code_used']})"
             text += f"- @{p['username']}{discount_info}\n"
 
     keyboard = [
@@ -360,9 +361,7 @@ async def view_participants(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
         ]
     ]
-    await query.edit_message_text(
-        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-    )
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     return VIEWING_EVENT
 
 
@@ -377,7 +376,7 @@ async def manage_discounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     codes = db.get_discount_codes_for_event(event_id)
     keyboard = []
     event = db.get_event_by_id(event_id)
-    text = f"💰 Discount Codes for '{event['name']}'\n\n"
+    text = f"Discount Codes for '{event['name']}'\n\n"
 
     if not codes:
         text += "No discount codes created yet."
@@ -530,10 +529,8 @@ async def save_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "An error occurred. This code might already exist for this event."
         )
 
-    # --- BUG FIX: Removed FakeQuery and now calling manage_discounts with the real update object ---
-    # We also need to reconstruct the callback_query object so manage_discounts knows which message to edit
+    # Reconstruct the callback_query to safely transition back.
     if update.message:
-        # Create a new callback query from the message context
         update.callback_query = type(
             "CallbackQuery",
             (),
@@ -543,15 +540,12 @@ async def save_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "answer": (
                     lambda: type("coro", (), {"__await__": (lambda: (yield))})()
                 ),
+                "from_user": update.effective_user,  # Add the user to avoid auth errors
             },
         )()
-        # Clear the user_data after use
-        context.user_data.clear()
-        return await manage_discounts(update, context)
 
-    # Fallback in case of an unexpected flow
     context.user_data.clear()
-    return ConversationHandler.END
+    return await manage_discounts(update, context)
 
 
 # --- General ---

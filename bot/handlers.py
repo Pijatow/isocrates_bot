@@ -44,8 +44,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if status == "confirmed":
             ticket = existing_registration["ticket_code"]
             await update.message.reply_text(
-                f"You are already registered for '{active_event['name']}'! Your ticket code is: `{ticket}`",
-                parse_mode="Markdown",
+                f"You are already registered for '{active_event['name']}'! Your ticket code is: {ticket}"
             )
         elif status == "pending_verification":
             await update.message.reply_text(
@@ -62,13 +61,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
     await update.message.reply_text(
         f"Welcome to the Isocrates event bot!\n\n"
-        f"The next event is: *{event_name}*\n\n"
+        f"The next event is: {event_name}\n\n"
         f"{event_desc}\n\n"
         "Would you like to sign up?",
         reply_markup=ReplyKeyboardMarkup(
             reply_keyboard, one_time_keyboard=True, resize_keyboard=True
         ),
-        parse_mode="Markdown",
     )
     return CHOOSING
 
@@ -111,9 +109,8 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             ticket_code = db.update_registration_status(reg_id, "confirmed")
             await update.message.reply_text(
                 "Great! You are now registered for this free event. See you there!\n\n"
-                f"Your ticket code is: `{ticket_code}`",
+                f"Your ticket code is: {ticket_code}",
                 reply_markup=ReplyKeyboardRemove(),
-                parse_mode="Markdown",
             )
         return ConversationHandler.END
 
@@ -136,17 +133,14 @@ async def handle_discount_prompt(
         context.user_data["discount_code"] = None
 
         final_fee_str = format_toman(active_event["fee"])
-        payment_details = active_event["payment_details"].format(
-            final_fee=final_fee_str
-        )
+        payment_details = active_event["payment_details"]
 
-        # --- UX FIX: New message format with clear call to action ---
         instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
-        message = f"مبلغ قابل پرداخت: *{final_fee_str}*\n\n{payment_details}{instruction_line}"
-
-        await update.message.reply_text(
-            message, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown"
+        message = (
+            f"مبلغ قابل پرداخت: {final_fee_str}\n\n{payment_details}{instruction_line}"
         )
+
+        await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
         return AWAITING_RECEIPT
 
 
@@ -196,22 +190,18 @@ async def handle_discount_code(
             await update.message.reply_text(
                 "✅ Your 100% discount code has been successfully applied!\n\n"
                 "You are now registered for this event. See you there!\n\n"
-                f"Your ticket code is: `{ticket_code}`",
+                f"Your ticket code is: {ticket_code}",
                 reply_markup=ReplyKeyboardRemove(),
-                parse_mode="Markdown",
             )
         return ConversationHandler.END
 
     final_fee_str = format_toman(final_fee)
-    payment_details = active_event["payment_details"].format(final_fee=final_fee_str)
+    payment_details = active_event["payment_details"]
 
-    # --- UX FIX: New message format with clear call to action ---
     instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
-    message = f"✅ Discount applied!\n\nمبلغ قابل پرداخت: *{final_fee_str}*\n\n{payment_details}{instruction_line}"
+    message = f"✅ Discount applied!\n\nمبلغ قابل پرداخت: {final_fee_str}\n\n{payment_details}{instruction_line}"
 
-    await update.message.reply_text(
-        message, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown"
-    )
+    await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
     return AWAITING_RECEIPT
 
 
@@ -277,8 +267,7 @@ async def my_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status == "confirmed":
         ticket = registration["ticket_code"]
         await update.message.reply_text(
-            f"You are confirmed for '{active_event['name']}'!\n\nYour ticket code is: `{ticket}`",
-            parse_mode="Markdown",
+            f"You are confirmed for '{active_event['name']}'!\n\nYour ticket code is: {ticket}"
         )
     elif status == "pending_verification":
         await update.message.reply_text(
