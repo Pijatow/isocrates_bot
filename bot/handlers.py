@@ -14,7 +14,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     logger.info(f"User {user.id} ({user.username}) started the bot.")
 
-    # --- User Onboarding ---
     inviter_id = None
     if context.args:
         referral_code = context.args[0]
@@ -28,7 +27,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         invited_by=inviter_id,
     )
 
-    # --- Event and Registration Check ---
     active_event = db.get_active_event()
     if not active_event:
         await update.message.reply_text(
@@ -59,7 +57,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         return ConversationHandler.END
 
-    # --- New Registration Flow ---
     event_name = active_event["name"]
     event_desc = active_event["description"]
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
@@ -106,7 +103,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         db.create_registration(
             user_id=user.id,
             event_id=active_event["event_id"],
-            status="confirmed",
+            status="pending",
             final_fee=0.0,
         )
         reg_id = db.get_last_registration_id(user.id, active_event["event_id"])
@@ -118,11 +115,6 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 reply_markup=ReplyKeyboardRemove(),
                 parse_mode="Markdown",
             )
-        else:
-            await update.message.reply_text(
-                "You are registered for this free event!",
-                reply_markup=ReplyKeyboardRemove(),
-            )
         return ConversationHandler.END
 
 
@@ -130,6 +122,7 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def handle_discount_prompt(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
+    """Handles user's response to whether they have a discount code."""
     user_choice = update.message.text
     active_event = context.user_data.get("active_event")
 
@@ -142,12 +135,17 @@ async def handle_discount_prompt(
         context.user_data["final_fee"] = active_event["fee"]
         context.user_data["discount_code"] = None
 
+        final_fee_str = format_toman(active_event["fee"])
+        payment_details = active_event["payment_details"].format(
+            final_fee=final_fee_str
+        )
+
+        # --- UX FIX: New message format with clear call to action ---
+        instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
+        message = f"مبلغ قابل پرداخت: *{final_fee_str}*\n\n{payment_details}{instruction_line}"
+
         await update.message.reply_text(
-            f"The total fee is {format_toman(active_event['fee'])}.\n\n"
-            f"Please make the payment as described below:\n\n"
-            f"{active_event['payment_details']}\n\n"
-            "After payment, please upload a clear photo of your receipt.",
-            reply_markup=ReplyKeyboardRemove(),
+            message, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown"
         )
         return AWAITING_RECEIPT
 
@@ -156,8 +154,11 @@ async def handle_discount_prompt(
 async def handle_discount_code(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
+    """Validates the discount code and calculates the final price."""
     code = update.message.text.upper()
     active_event = context.user_data.get("active_event")
+    user = update.effective_user
+
     discount = db.get_discount_code(active_event["event_id"], code)
 
     if not discount:
@@ -180,12 +181,36 @@ async def handle_discount_code(
     context.user_data["discount_code"] = code
     context.user_data["discount_code_id"] = discount["code_id"]
 
+    if final_fee <= 0:
+        db.create_registration(
+            user_id=user.id,
+            event_id=active_event["event_id"],
+            status="pending",
+            final_fee=0.0,
+            discount_code=code,
+        )
+        db.use_discount_code(discount["code_id"])
+        reg_id = db.get_last_registration_id(user.id, active_event["event_id"])
+        if reg_id:
+            ticket_code = db.update_registration_status(reg_id, "confirmed")
+            await update.message.reply_text(
+                "✅ Your 100% discount code has been successfully applied!\n\n"
+                "You are now registered for this event. See you there!\n\n"
+                f"Your ticket code is: `{ticket_code}`",
+                reply_markup=ReplyKeyboardRemove(),
+                parse_mode="Markdown",
+            )
+        return ConversationHandler.END
+
+    final_fee_str = format_toman(final_fee)
+    payment_details = active_event["payment_details"].format(final_fee=final_fee_str)
+
+    # --- UX FIX: New message format with clear call to action ---
+    instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
+    message = f"✅ Discount applied!\n\nمبلغ قابل پرداخت: *{final_fee_str}*\n\n{payment_details}{instruction_line}"
+
     await update.message.reply_text(
-        f"✅ Discount applied! The new fee is {format_toman(final_fee)}.\n\n"
-        f"Please make the payment as described below:\n\n"
-        f"{active_event['payment_details']}\n\n"
-        "After payment, please upload a clear photo of your receipt.",
-        reply_markup=ReplyKeyboardRemove(),
+        message, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown"
     )
     return AWAITING_RECEIPT
 

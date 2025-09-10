@@ -278,7 +278,9 @@ async def get_event_is_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
     context.user_data["is_paid"] = query.data == "paid"
     if context.user_data["is_paid"]:
-        await query.edit_message_text("Please enter the event fee (e.g., 150000):")
+        await query.edit_message_text(
+            "Please enter the event fee in Toman (e.g., 150000):"
+        )
         return GETTING_EVENT_FEE
     else:
         context.user_data["fee"] = 0.0
@@ -290,7 +292,10 @@ async def get_event_is_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 @admin_only
 async def get_event_fee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["fee"] = float(update.message.text)
-    await update.message.reply_text("Please enter payment details (e.g., bank info):")
+    await update.message.reply_text(
+        "Please enter the full payment instructions. You can use the placeholder `{final_fee}` to show the calculated price.\n\n"
+        "Example:\n`Please pay {final_fee} to account 12345.`"
+    )
     return GETTING_PAYMENT_DETAILS
 
 
@@ -371,7 +376,8 @@ async def manage_discounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     codes = db.get_discount_codes_for_event(event_id)
     keyboard = []
-    text = f"💰 Discount Codes for '{db.get_event_by_id(event_id)['name']}'\n\n"
+    event = db.get_event_by_id(event_id)
+    text = f"💰 Discount Codes for '{event['name']}'\n\n"
 
     if not codes:
         text += "No discount codes created yet."
@@ -380,7 +386,7 @@ async def manage_discounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             value = (
                 f"{int(code['value'])}%"
                 if code["discount_type"] == "percentage"
-                else format_toman(code["value"])
+                else f"{format_toman(code['value'])}"
             )
             button_text = f"'{code['code']}' ({value}) - {code['uses_left']} uses left"
             keyboard.append(
@@ -473,7 +479,7 @@ async def get_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     keyboard = [
         [
             InlineKeyboardButton("Percentage %", callback_data="percentage"),
-            InlineKeyboardButton("Fixed Amount", callback_data="fixed"),
+            InlineKeyboardButton("Fixed Amount (Toman)", callback_data="fixed"),
         ]
     ]
     await update.message.reply_text(
@@ -490,7 +496,7 @@ async def get_discount_type(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     prompt = (
         "Enter the percentage value (e.g., 20 for 20%):"
         if query.data == "percentage"
-        else "Enter the fixed amount (e.g., 50000 for 50,000 Toman):"
+        else "Enter the fixed amount in Toman (e.g., 50000):"
     )
     await query.edit_message_text(prompt)
     return GETTING_DISCOUNT_VALUE
@@ -524,20 +530,28 @@ async def save_discount_code(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "An error occurred. This code might already exist for this event."
         )
 
-    class FakeQuery:
-        def __init__(self, msg, data):
-            self.message = msg
-            self.data = data
+    # --- BUG FIX: Removed FakeQuery and now calling manage_discounts with the real update object ---
+    # We also need to reconstruct the callback_query object so manage_discounts knows which message to edit
+    if update.message:
+        # Create a new callback query from the message context
+        update.callback_query = type(
+            "CallbackQuery",
+            (),
+            {
+                "data": f"manage_discounts_{event_id}",
+                "message": update.message,
+                "answer": (
+                    lambda: type("coro", (), {"__await__": (lambda: (yield))})()
+                ),
+            },
+        )()
+        # Clear the user_data after use
+        context.user_data.clear()
+        return await manage_discounts(update, context)
 
-        async def answer(self):
-            pass
-
-    fake_update = Update(
-        update.update_id,
-        callback_query=FakeQuery(update.message, f"manage_discounts_{event_id}"),
-    )
+    # Fallback in case of an unexpected flow
     context.user_data.clear()
-    return await manage_discounts(fake_update, context)
+    return ConversationHandler.END
 
 
 # --- General ---
