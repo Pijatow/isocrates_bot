@@ -51,3 +51,10 @@ CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 20
 MAX_RETRIES = 3
 RETRY_DELAY = 2
+
+# --- Watchdog Configuration ---
+BOT_RESTART_DELAY = 15  # Seconds watchdog waits before restarting the bot process
+HEARTBEAT_INTERVAL = 15  # How often the bot writes its "I'm alive" signal
+HEARTBEAT_TIMEOUT = (
+    60  # How long watchdog waits for a heartbeat before declaring the bot frozen
+)

@@ -2,7 +2,8 @@ import logging
 from datetime import datetime, timedelta
 import database as db
 
-logger = logging.getLogger()
+# Use the dedicated scheduler logger
+logger = logging.getLogger("scheduler")
 
 
 async def check_and_send_reminders(context):
@@ -30,8 +31,15 @@ async def check_and_send_reminders(context):
 
             for hour in reminder_hours:
                 reminder_time = event_date - timedelta(hours=hour)
-                if now > reminder_time and (now - reminder_time).total_seconds() < 60:
+                # Check if the reminder time is within the last minute
+                if now >= reminder_time and (now - reminder_time).total_seconds() < 60:
                     attendees = db.get_confirmed_attendees(event_id)
+                    if not attendees:
+                        logger.info(
+                            f"Reminder triggered for '{event_name}', but there are no confirmed attendees."
+                        )
+                        continue
+
                     logger.info(
                         f"Sending {hour}-hour reminder for event '{event_name}' to {len(attendees)} attendees."
                     )

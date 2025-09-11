@@ -2,24 +2,31 @@ import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 import database as db
-from .utils import retry_on_network_error, format_toman
+from .utils import retry_on_network_error, format_toman, get_user_info
 from config import *
 
-logger = logging.getLogger("UserMessages")
-app_logger = logging.getLogger()
+interactions_logger = logging.getLogger("interactions")
+app_logger = logging.getLogger("app")
 
 
 @retry_on_network_error
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
-    logger.info(f"User {user.id} ({user.username}) started the bot.")
+    log_msg_base = f"{get_user_info(user)} started with command: /start"
 
     inviter_id = None
     if context.args:
         referral_code = context.args[0]
+        log_msg = f"{log_msg_base} with referral code '{referral_code}'"
         inviter_id = db.find_user_by_referral_code(referral_code)
         if inviter_id:
-            logger.info(f"Referral successful: {user.id} was invited by {inviter_id}")
+            app_logger.info(
+                f"Referral successful: {get_user_info(user)} was invited by user_id {inviter_id}"
+            )
+    else:
+        log_msg = log_msg_base
+
+    interactions_logger.info(log_msg)
     db.add_or_update_user(
         user_id=user.id,
         username=user.username,
@@ -56,13 +63,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         return ConversationHandler.END
 
-    event_name = active_event["name"]
-    event_desc = active_event["description"]
     reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
     await update.message.reply_text(
         f"Welcome to the Isocrates event bot!\n\n"
-        f"The next event is: {event_name}\n\n"
-        f"{event_desc}\n\n"
+        f"The next event is: {active_event['name']}\n\n"
+        f"{active_event['description']}\n\n"
         "Would you like to sign up?",
         reply_markup=ReplyKeyboardMarkup(
             reply_keyboard, one_time_keyboard=True, resize_keyboard=True
@@ -75,7 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     user_choice = update.message.text
-    logger.info(f"User {user.id} chose: '{user_choice}'.")
+    interactions_logger.info(f"{get_user_info(user)} chose: '{user_choice}'.")
 
     if user_choice == "No, thanks.":
         await update.message.reply_text(
@@ -119,8 +124,11 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def handle_discount_prompt(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Handles user's response to whether they have a discount code."""
+    user = update.effective_user
     user_choice = update.message.text
+    interactions_logger.info(
+        f"{get_user_info(user)} responded to discount prompt with: '{user_choice}'."
+    )
     active_event = context.user_data.get("active_event")
 
     if user_choice == "Yes":
@@ -148,10 +156,12 @@ async def handle_discount_prompt(
 async def handle_discount_code(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
-    """Validates the discount code and calculates the final price."""
     code = update.message.text.upper()
-    active_event = context.user_data.get("active_event")
     user = update.effective_user
+    interactions_logger.info(
+        f"{get_user_info(user)} submitted discount code: '{code}'."
+    )
+    active_event = context.user_data.get("active_event")
 
     discount = db.get_discount_code(active_event["event_id"], code)
 
@@ -213,6 +223,10 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     final_fee = context.user_data.get("final_fee")
     discount_code = context.user_data.get("discount_code")
 
+    interactions_logger.info(
+        f"{get_user_info(user)} submitted a receipt photo [FileID:{photo.file_id}]."
+    )
+
     db.create_registration(
         user_id=user.id,
         event_id=active_event["event_id"],
@@ -229,15 +243,20 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if "discount_code_id" in context.user_data:
         db.use_discount_code(context.user_data["discount_code_id"])
 
+    # Send photo with details to admin chat
     caption = (
         f"New payment receipt for: '{active_event['name']}'\n"
-        f"User: {user.full_name} (@{user.username})\n"
+        f"From User: {get_user_info(user)}\n"
         f"Fee Paid: {format_toman(final_fee)}\n"
         f"Discount Used: {discount_code or 'None'}"
     )
     await context.bot.send_photo(
         chat_id=ADMIN_CHAT_ID, photo=photo.file_id, caption=caption
     )
+
+    # Send a separate, simple text notification for high visibility
+    notification_text = f"📢 New receipt from {user.full_name} (@{user.username}) requires verification."
+    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=notification_text)
 
     await update.message.reply_text(
         "Thank you! Your receipt has been submitted for verification.",
@@ -247,10 +266,10 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return ConversationHandler.END
 
 
-# --- Other Commands ---
 @retry_on_network_error
 async def my_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    interactions_logger.info(f"{get_user_info(user)} requested /myticket.")
     active_event = db.get_active_event()
     if not active_event:
         await update.message.reply_text("There are no active events right now.")
@@ -282,6 +301,7 @@ async def my_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @retry_on_network_error
 async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    interactions_logger.info(f"{get_user_info(user)} requested /myreferral.")
     referral_info = db.get_user_referral_info(user.id)
     if referral_info:
         referral_code, referral_count = referral_info
@@ -297,6 +317,7 @@ async def my_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @retry_on_network_error
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    interactions_logger.info(f"{get_user_info(user)} requested /help.")
     user_help_text = (
         "Here are the available commands:\n\n"
         "/start - Register for the active event.\n"
@@ -320,6 +341,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @retry_on_network_error
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    interactions_logger.info(
+        f"{get_user_info(user)} cancelled the conversation with /cancel."
+    )
     await update.message.reply_text(
         "Action cancelled.", reply_markup=ReplyKeyboardRemove()
     )
