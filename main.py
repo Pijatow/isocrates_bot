@@ -1,83 +1,103 @@
+import logging
 import subprocess
 import time
-import logging
+import signal
 import os
+import sys
 from logging_config import setup_loggers
-from config import BOT_RESTART_DELAY, HEARTBEAT_TIMEOUT
+from config import (
+    BOT_RESTART_DELAY,
+    HEARTBEAT_FILE,
+    HEARTBEAT_INTERVAL,
+    HEARTBEAT_TIMEOUT,
+)
 
-# Define the path for the heartbeat file
-HEARTBEAT_FILE = os.path.join("logs", "heartbeat.log")
+# --- Setup ---
+setup_loggers()
+log = logging.getLogger()
+bot_process = None
+
+# --- CRITICAL: Build absolute paths ---
+# This ensures the script can find the venv and bot_process.py
+# regardless of where it's run from (e.g., systemd).
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PYTHON_EXECUTABLE = os.path.join(SCRIPT_DIR, "venv", "bin", "python")
+BOT_SCRIPT_PATH = os.path.join(SCRIPT_DIR, "bot_process.py")
+
+
+def start_bot_process():
+    """Launches the bot as a separate process using the correct virtual environment."""
+    global bot_process
+    log.info(f"Launching bot process: {PYTHON_EXECUTABLE} {BOT_SCRIPT_PATH}")
+    try:
+        # We use the absolute path to the Python interpreter in the venv
+        # and the absolute path to the bot script.
+        bot_process = subprocess.Popen([PYTHON_EXECUTABLE, BOT_SCRIPT_PATH])
+        if os.path.exists(HEARTBEAT_FILE):
+            os.remove(HEARTBEAT_FILE)
+    except FileNotFoundError:
+        log.critical(
+            f"Could not find Python executable at '{PYTHON_EXECUTABLE}'. "
+            "Please ensure the virtual environment path in main.py is correct."
+        )
+        sys.exit(1)
+    except Exception as e:
+        log.critical(f"Failed to start bot process: {e}", exc_info=True)
+        sys.exit(1)
+
+
+def handle_shutdown_signal(signum, frame):
+    """Gracefully shuts down the watchdog and the bot process."""
+    log.info("Watchdog received shutdown signal (Ctrl+C). Terminating.")
+    if bot_process and bot_process.poll() is None:
+        log.info("Terminating bot process...")
+        bot_process.terminate()
+        bot_process.wait()
+    log.info("Isocrates Bot watchdog has been shut down.")
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, handle_shutdown_signal)
+signal.signal(signal.SIGTERM, handle_shutdown_signal)
+
 
 if __name__ == "__main__":
-    """
-    This script is the main watchdog for the Isocrates Bot.
-    It runs the bot in a separate process and monitors a "heartbeat" file.
-    If the heartbeat stops updating or the file is missing, the watchdog assumes
-    the bot is frozen or has self-terminated, kills the process, and launches a new one.
-    """
-    setup_loggers()
-    logging.info("--- Starting Isocrates Bot Watchdog ---")
+    log.info("Starting Isocrates Bot watchdog...")
+    start_bot_process()
 
-    bot_process = None
     while True:
         try:
-            logging.info("Launching bot process...")
-            bot_process = subprocess.Popen(["python3", "bot_process.py"])
+            time.sleep(HEARTBEAT_INTERVAL * 2)
 
-            # Give the bot a moment to start up and create the first heartbeat
-            time.sleep(10)
+            bot_is_running = bot_process.poll() is None
+            heartbeat_is_stale = False
+            heartbeat_file_missing = not os.path.exists(HEARTBEAT_FILE)
 
-            # --- Monitoring Loop ---
-            while bot_process.poll() is None:  # While the bot process is running
-                heartbeat_ok = False
-                if os.path.exists(HEARTBEAT_FILE):
-                    try:
-                        with open(HEARTBEAT_FILE, "r") as f:
-                            last_heartbeat = float(f.read())
+            if not heartbeat_file_missing:
+                last_heartbeat = os.path.getmtime(HEARTBEAT_FILE)
+                if (time.time() - last_heartbeat) > HEARTBEAT_TIMEOUT:
+                    heartbeat_is_stale = True
 
-                        if time.time() - last_heartbeat < HEARTBEAT_TIMEOUT:
-                            heartbeat_ok = True
-                        else:
-                            logging.warning(
-                                f"Bot heartbeat is stale (last seen {int(time.time() - last_heartbeat)}s ago). Process appears frozen."
-                            )
-                    except (ValueError, IOError) as e:
-                        logging.warning(f"Could not read heartbeat file: {e}")
-                else:
-                    logging.warning(
-                        "Heartbeat file not found. Assuming bot has self-terminated or failed to start."
-                    )
+            # If the bot is running but the heartbeat is bad, it's frozen.
+            if bot_is_running and (heartbeat_is_stale or heartbeat_file_missing):
+                log.error(
+                    "Heartbeat is stale or missing. The bot process appears to be frozen. Terminating and restarting..."
+                )
+                bot_process.terminate()
+                bot_process.wait()
+                start_bot_process()
 
-                if not heartbeat_ok:
-                    logging.error("Terminating unresponsive bot process...")
-                    bot_process.terminate()
-                    time.sleep(5)  # Give it time to die
-                    break  # Exit monitoring loop to trigger restart
-
-                # Check the heartbeat file periodically
-                time.sleep(20)
-
-            # --- Restart Logic ---
-            # This code is reached if the process terminates on its own OR if we terminated it.
-            exit_code = bot_process.returncode
-            logging.error(
-                f"Bot process has terminated with exit code {exit_code}. Restarting in {BOT_RESTART_DELAY} seconds..."
-            )
-            time.sleep(BOT_RESTART_DELAY)
+            # If the bot process has stopped for any reason, restart it.
+            elif not bot_is_running:
+                log.error(
+                    f"Bot process stopped unexpectedly (exit code: {bot_process.returncode}). Restarting..."
+                )
+                start_bot_process()
 
         except KeyboardInterrupt:
-            logging.info(
-                "Watchdog received shutdown signal (Ctrl+C). Terminating bot process."
-            )
-            if bot_process and bot_process.poll() is None:
-                bot_process.terminate()
+            # This is handled by the signal handler, but we keep it here as a fallback.
             break
         except Exception as e:
-            logging.critical(
-                f"Watchdog encountered a critical error: {e}", exc_info=True
-            )
-            if bot_process and bot_process.poll() is None:
-                bot_process.terminate()
+            log.critical(f"Watchdog encountered a critical error: {e}", exc_info=True)
+            # Wait before retrying to prevent rapid-fire crash loops
             time.sleep(BOT_RESTART_DELAY)
-
-    logging.info("--- Isocrates Bot Watchdog has shut down. ---")

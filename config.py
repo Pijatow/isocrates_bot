@@ -46,15 +46,16 @@ CHOOSING, AWAITING_DISCOUNT_PROMPT, AWAITING_DISCOUNT_CODE, AWAITING_RECEIPT = r
 ) = range(4, 20)
 
 
-# --- Network Configuration ---
+# --- Network & Watchdog Configuration ---
 CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 20
 MAX_RETRIES = 3
 RETRY_DELAY = 2
+BOT_RESTART_DELAY = 15  # Seconds to wait before the watchdog restarts the bot
 
-# --- Watchdog Configuration ---
-BOT_RESTART_DELAY = 15  # Seconds watchdog waits before restarting the bot process
-HEARTBEAT_INTERVAL = 15  # How often the bot writes its "I'm alive" signal
-HEARTBEAT_TIMEOUT = (
-    60  # How long watchdog waits for a heartbeat before declaring the bot frozen
-)
+# Heartbeat settings for the watchdog
+HEARTBEAT_INTERVAL = 15  # Seconds: How often the bot updates its heartbeat
+HEARTBEAT_TIMEOUT = 60  # Seconds: How long to wait before declaring the bot frozen
+HEARTBEAT_FILE = os.path.join(
+    "logs", "heartbeat.log"
+)  # The location of the heartbeat file
