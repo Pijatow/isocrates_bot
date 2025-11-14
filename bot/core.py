@@ -201,12 +201,6 @@ def run_bot() -> None:
     user_conv_handler = ConversationHandler(
         entry_points=user_entry_points,
         states={
-            CHOOSING: [
-                MessageHandler(
-                    filters.Regex("^(Yes, Register Me!|No, thanks.)$"),
-                    handlers.handle_choice,
-                )
-            ],
             AWAITING_DISCOUNT_PROMPT: [
                 MessageHandler(
                     filters.Regex("^(Yes|No)$"), handlers.handle_discount_prompt

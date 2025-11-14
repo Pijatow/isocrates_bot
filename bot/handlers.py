@@ -63,46 +63,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         return ConversationHandler.END
 
-    reply_keyboard = [["Yes, Register Me!", "No, thanks."]]
+    # Show event details
     await update.message.reply_text(
         f"Welcome to the Isocrates event bot!\n\n"
-        f"The next event is: {active_event['name']}\n\n"
+        f"Event: {active_event['name']}\n\n"
         f"{active_event['description']}\n\n"
-        "Would you like to sign up?",
-        reply_markup=ReplyKeyboardMarkup(
-            reply_keyboard, one_time_keyboard=True, resize_keyboard=True
-        ),
+        f"Date: {active_event['date']}",
+        reply_markup=ReplyKeyboardRemove(),
     )
-    return CHOOSING
 
-
-@retry_on_network_error
-async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
-    user_choice = update.message.text
-    interactions_logger.info(f"{get_user_info(user)} chose: '{user_choice}'.")
-
-    if user_choice == "No, thanks.":
-        await update.message.reply_text(
-            "No problem. Hope to see you next time!", reply_markup=ReplyKeyboardRemove()
-        )
-        return ConversationHandler.END
-
-    active_event = context.user_data.get("active_event")
-    if not active_event:
-        await update.message.reply_text("Sorry, event registration just closed.")
-        return ConversationHandler.END
-
-    if active_event["is_paid"]:
-        reply_keyboard = [["Yes", "No"]]
-        await update.message.reply_text(
-            "Do you have a discount code?",
-            reply_markup=ReplyKeyboardMarkup(
-                reply_keyboard, one_time_keyboard=True, resize_keyboard=True
-            ),
-        )
-        return AWAITING_DISCOUNT_PROMPT
-    else:  # Free event
+    # If it's a free event, register immediately
+    if not active_event["is_paid"]:
         db.create_registration(
             user_id=user.id,
             event_id=active_event["event_id"],
@@ -114,10 +85,42 @@ async def handle_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             ticket_code = db.update_registration_status(reg_id, "confirmed")
             await update.message.reply_text(
                 "Great! You are now registered for this free event. See you there!\n\n"
-                f"Your ticket code is: {ticket_code}",
-                reply_markup=ReplyKeyboardRemove(),
+                f"Your ticket code is: {ticket_code}"
             )
         return ConversationHandler.END
+
+    # For paid events, check if there are any active discount codes
+    discount_codes = db.get_discount_codes_for_event(active_event["event_id"])
+    active_discounts = [code for code in discount_codes if code["is_active"] and code["uses_left"] > 0]
+
+    if active_discounts:
+        # Ask about discount code only if there are active codes
+        reply_keyboard = [["Yes", "No"]]
+        await update.message.reply_text(
+            "Do you have a discount code?",
+            reply_markup=ReplyKeyboardMarkup(
+                reply_keyboard, one_time_keyboard=True, resize_keyboard=True
+            ),
+        )
+        return AWAITING_DISCOUNT_PROMPT
+    else:
+        # No discount codes available, proceed directly to payment
+        context.user_data["final_fee"] = active_event["fee"]
+        context.user_data["discount_code"] = None
+
+        final_fee_str = format_toman(active_event["fee"])
+        payment_details = active_event["payment_details"]
+
+        instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
+        message = (
+            f"مبلغ قابل پرداخت: {final_fee_str}\n\n{payment_details}{instruction_line}"
+        )
+
+        await update.message.reply_text(message)
+        return AWAITING_RECEIPT
+
+
+
 
 
 @retry_on_network_error
