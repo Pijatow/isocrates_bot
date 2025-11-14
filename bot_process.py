@@ -5,8 +5,8 @@ from logging_config import setup_loggers
 from database import initialize_database
 
 # Optional: Proxy settings can still be configured here if needed.
-os.environ["http_proxy"] = "http://127.0.0.1:10808"
-os.environ["https_proxy"] = "http://127.0.0.1:10808"
+# os.environ["http_proxy"] = "http://127.0.0.1:10808"
+# os.environ["https_proxy"] = "http://127.0.0.1:10808"
 
 
 if __name__ == "__main__":
