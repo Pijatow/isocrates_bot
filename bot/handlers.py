@@ -50,12 +50,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         return ConversationHandler.END
 
-    # Show event details
+    # Show welcome message
     await update.message.reply_text(
-        f"Welcome to the Isocrates event bot!\n\n"
-        f"Event: {active_event['name']}\n\n"
-        f"{active_event['description']}\n\n"
-        f"Date: {active_event['date']}",
+        f"Welcome to the Isocrates Bot!\n\n"
+        f"Current event: {active_event['name']}",
         reply_markup=ReplyKeyboardRemove(),
     )
 
