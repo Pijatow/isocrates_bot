@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
     first_name TEXT,
-    referral_code TEXT UNIQUE,
-    invited_by_user_id INTEGER,
-    referral_count INTEGER DEFAULT 0,
+    referral_code TEXT UNIQUE,          -- DEPRECATED: No longer used
+    invited_by_user_id INTEGER,         -- DEPRECATED: No longer used
+    referral_count INTEGER DEFAULT 0,   -- DEPRECATED: No longer used
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -79,6 +79,13 @@ def initialize_database():
 
 # --- User Functions ---
 def add_or_update_user(user_id, username, first_name, invited_by=None):
+    """
+    Add or update a user in the database.
+
+    Note: The referral system (invited_by, referral_code, referral_count)
+    is deprecated and no longer used by the bot. These fields are maintained
+    for backward compatibility only.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -104,6 +111,10 @@ def add_or_update_user(user_id, username, first_name, invited_by=None):
 
 
 def find_user_by_referral_code(code):
+    """
+    DEPRECATED: This function is no longer used as the referral system has been removed.
+    Kept for backward compatibility only.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE referral_code = ?", (code,))
@@ -113,6 +124,10 @@ def find_user_by_referral_code(code):
 
 
 def get_user_referral_info(user_id):
+    """
+    DEPRECATED: This function is no longer used as the referral system has been removed.
+    Kept for backward compatibility only.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
