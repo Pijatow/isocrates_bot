@@ -24,7 +24,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     active_event = db.get_active_event()
     if not active_event:
         await update.message.reply_text(
-            "There are no active events for registration right now."
+            "🔍 No Active Events\n\n"
+            "There are currently no events open for registration.\n\n"
+            "Please check back later! 😊"
         )
         return ConversationHandler.END
 
@@ -38,22 +40,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if status == "confirmed":
             ticket = existing_registration["ticket_code"]
             await update.message.reply_text(
-                f"You are already registered for '{active_event['name']}'! Your ticket code is: {ticket}"
+                f"✅ Already Registered!\n\n"
+                f"You're all set for '{active_event['name']}'!\n\n"
+                f"🎫 Your ticket code:\n{ticket}\n\n"
+                f"See you at the event! 🎉"
             )
         elif status == "pending_verification":
             await update.message.reply_text(
-                "You have already submitted a payment for this event. Please wait for an admin to approve it."
+                "⏳ Payment Under Review\n\n"
+                "Your payment receipt has been submitted and is waiting for "
+                "admin approval.\n\n"
+                "You'll receive your ticket code once it's verified. "
+                "Thanks for your patience! 😊"
             )
         elif status == "rejected":
             await update.message.reply_text(
-                "Your previous registration for this event was rejected. Please contact an admin if you believe this was a mistake."
+                "❌ Registration Rejected\n\n"
+                "Unfortunately, your previous registration for this event "
+                "was not approved.\n\n"
+                "If you believe this was a mistake, please contact an admin."
             )
         return ConversationHandler.END
 
     # Show welcome message
     await update.message.reply_text(
-        f"Welcome to the Isocrates Bot!\n\n"
-        f"Current event: {active_event['name']}",
+        f"👋 Welcome to Isocrates!\n\n"
+        f"📅 Current event: {active_event['name']}",
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -69,8 +81,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if reg_id:
             ticket_code = db.update_registration_status(reg_id, "confirmed")
             await update.message.reply_text(
-                "Great! You are now registered for this free event. See you there!\n\n"
-                f"Your ticket code is: {ticket_code}"
+                "🎉 Registration Confirmed!\n\n"
+                "You're all set for this free event!\n\n"
+                f"🎫 Your ticket code:\n{ticket_code}\n\n"
+                "See you there! 😊"
             )
         return ConversationHandler.END
 
@@ -82,6 +96,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         # Ask about discount code only if there are active codes
         reply_keyboard = [["Yes", "No"]]
         await update.message.reply_text(
+            "💰 Discount Code\n\n"
             "Do you have a discount code?",
             reply_markup=ReplyKeyboardMarkup(
                 reply_keyboard, one_time_keyboard=True, resize_keyboard=True
@@ -96,9 +111,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         final_fee_str = format_toman(active_event["fee"])
         payment_details = active_event["payment_details"]
 
-        instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
+        instruction_line = "\n\n📸 پس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
         message = (
-            f"مبلغ قابل پرداخت: {final_fee_str}\n\n{payment_details}{instruction_line}"
+            f"💳 Payment Information\n\n"
+            f"مبلغ قابل پرداخت: {final_fee_str}\n\n"
+            f"{payment_details}{instruction_line}"
         )
 
         await update.message.reply_text(message)
@@ -121,7 +138,9 @@ async def handle_discount_prompt(
 
     if user_choice == "Yes":
         await update.message.reply_text(
-            "Please enter your discount code:", reply_markup=ReplyKeyboardRemove()
+            "🔑 Enter Your Discount Code\n\n"
+            "Please type your discount code below:",
+            reply_markup=ReplyKeyboardRemove()
         )
         return AWAITING_DISCOUNT_CODE
     else:
@@ -131,9 +150,11 @@ async def handle_discount_prompt(
         final_fee_str = format_toman(active_event["fee"])
         payment_details = active_event["payment_details"]
 
-        instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
+        instruction_line = "\n\n📸 پس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
         message = (
-            f"مبلغ قابل پرداخت: {final_fee_str}\n\n{payment_details}{instruction_line}"
+            f"💳 Payment Information\n\n"
+            f"مبلغ قابل پرداخت: {final_fee_str}\n\n"
+            f"{payment_details}{instruction_line}"
         )
 
         await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
@@ -155,7 +176,9 @@ async def handle_discount_code(
 
     if not discount:
         await update.message.reply_text(
-            "That code is invalid, has expired, or does not belong to this event. Please try again or type /cancel."
+            "❌ Invalid Code\n\n"
+            "This discount code is invalid, expired, or doesn't belong to this event.\n\n"
+            "Please try again or type /cancel to skip."
         )
         return AWAITING_DISCOUNT_CODE
 
@@ -186,9 +209,10 @@ async def handle_discount_code(
         if reg_id:
             ticket_code = db.update_registration_status(reg_id, "confirmed")
             await update.message.reply_text(
-                "✅ Your 100% discount code has been successfully applied!\n\n"
-                "You are now registered for this event. See you there!\n\n"
-                f"Your ticket code is: {ticket_code}",
+                "🎉 Amazing! 100% Discount Applied!\n\n"
+                "Your discount code covered the entire fee!\n\n"
+                f"🎫 Your ticket code:\n{ticket_code}\n\n"
+                "See you at the event! 🎊",
                 reply_markup=ReplyKeyboardRemove(),
             )
         return ConversationHandler.END
@@ -196,8 +220,13 @@ async def handle_discount_code(
     final_fee_str = format_toman(final_fee)
     payment_details = active_event["payment_details"]
 
-    instruction_line = "\n\nپس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
-    message = f"✅ Discount applied!\n\nمبلغ قابل پرداخت: {final_fee_str}\n\n{payment_details}{instruction_line}"
+    instruction_line = "\n\n📸 پس از پرداخت، لطفا از رسید خود عکس واضحی ارسال کنید."
+    message = (
+        f"✅ Discount Applied!\n\n"
+        f"💳 Payment Information\n\n"
+        f"مبلغ قابل پرداخت: {final_fee_str}\n\n"
+        f"{payment_details}{instruction_line}"
+    )
 
     await update.message.reply_text(message, reply_markup=ReplyKeyboardRemove())
     return AWAITING_RECEIPT
@@ -247,7 +276,10 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=notification_text)
 
     await update.message.reply_text(
-        "Thank you! Your receipt has been submitted for verification.",
+        "✅ Receipt Submitted!\n\n"
+        "Thank you! Your payment receipt has been submitted for verification.\n\n"
+        "⏳ You'll receive your ticket code once an admin approves your payment.\n\n"
+        "This usually takes a few hours. Thanks for your patience! 😊",
         reply_markup=ReplyKeyboardRemove(),
     )
     context.user_data.clear()
@@ -259,15 +291,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     interactions_logger.info(f"{get_user_info(user)} requested /help.")
     user_help_text = (
-        "Here are the available commands:\n\n"
-        "/start - Register for the active event.\n"
-        "/cancel - Stop any active process, like registration.\n"
-        "/help - Shows this help message."
+        "📚 Available Commands\n\n"
+        "🎫 /start - Register for the active event\n"
+        "❌ /cancel - Stop any active process\n"
+        "❓ /help - Show this help message"
     )
     admin_help_text = (
-        "\n\n--- 👑 ADMIN HELP ---\n"
-        "You have access to all user commands plus:\n\n"
-        "/admin - Open the main admin control panel."
+        "\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "👑 ADMIN COMMANDS\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚙️ /admin - Open admin control panel"
     )
 
     if user.id in ADMIN_USER_IDS:
@@ -284,7 +318,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"{get_user_info(user)} cancelled the conversation with /cancel."
     )
     await update.message.reply_text(
-        "Action cancelled.", reply_markup=ReplyKeyboardRemove()
+        "❌ Cancelled\n\n"
+        "Action cancelled. You can start over anytime with /start",
+        reply_markup=ReplyKeyboardRemove()
     )
     context.user_data.clear()
     return ConversationHandler.END
