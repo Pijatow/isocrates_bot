@@ -260,20 +260,26 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if "discount_code_id" in context.user_data:
         db.use_discount_code(context.user_data["discount_code_id"])
 
-    # Send photo with details to admin chat
+    # Send photo with details to all admin users
     caption = (
-        f"New payment receipt for: '{active_event['name']}'\n"
-        f"From User: {get_user_info(user)}\n"
+        f"📸 New Payment Receipt\n\n"
+        f"Event: '{active_event['name']}'\n"
+        f"From: {get_user_info(user)}\n"
         f"Fee Paid: {format_toman(final_fee)}\n"
         f"Discount Used: {discount_code or 'None'}"
     )
-    await context.bot.send_photo(
-        chat_id=ADMIN_CHAT_ID, photo=photo.file_id, caption=caption
-    )
 
-    # Send a separate, simple text notification for high visibility
     notification_text = f"📢 New receipt from {user.full_name} (@{user.username}) requires verification."
-    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=notification_text)
+
+    # Notify all admin users
+    for admin_id in ADMIN_USER_IDS:
+        try:
+            await context.bot.send_photo(
+                chat_id=admin_id, photo=photo.file_id, caption=caption
+            )
+            await context.bot.send_message(chat_id=admin_id, text=notification_text)
+        except Exception as e:
+            app_logger.error(f"Failed to send receipt notification to admin {admin_id}: {e}")
 
     await update.message.reply_text(
         "✅ Receipt Submitted!\n\n"

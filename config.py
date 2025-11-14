@@ -10,11 +10,11 @@ if not TELEGRAM_BOT_TOKEN or not BOT_USERNAME:
     raise ValueError("TELEGRAM_BOT_TOKEN and BOT_USERNAME must be set in .env file!")
 
 # --- Admin Configuration ---
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # DEPRECATED: No longer used, kept for backward compatibility
 admin_ids_str = os.getenv("ADMIN_USER_IDS", "")
 ADMIN_USER_IDS = [int(uid.strip()) for uid in admin_ids_str.split(",") if uid.strip()]
-if not ADMIN_CHAT_ID or not ADMIN_USER_IDS:
-    raise ValueError("ADMIN_CHAT_ID and ADMIN_USER_IDS must be set in .env file!")
+if not ADMIN_USER_IDS:
+    raise ValueError("ADMIN_USER_IDS must be set in .env file!")
 
 # --- Database Configuration ---
 DATABASE_NAME = "isocrates.db"

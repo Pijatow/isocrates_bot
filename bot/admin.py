@@ -112,7 +112,12 @@ async def handle_registration_approval(
     await query.edit_message_caption(caption=f"✅ Registration {reg_id} approved.")
     await context.bot.send_message(
         chat_id=target_user_id,
-        text=f"Congratulations! Your registration has been approved.\n\nYour unique ticket code is: {ticket_code}",
+        text=(
+            "🎉 Registration Approved!\n\n"
+            "Congratulations! Your payment has been verified and your registration is confirmed!\n\n"
+            f"🎫 Your ticket code:\n{ticket_code}\n\n"
+            "See you at the event! 🎊"
+        ),
     )
 
 
@@ -132,7 +137,11 @@ async def handle_registration_rejection(
     await query.edit_message_caption(caption=f"❌ Registration {reg_id} rejected.")
     await context.bot.send_message(
         chat_id=target_user_id,
-        text="Unfortunately, your registration could not be approved.",
+        text=(
+            "❌ Registration Not Approved\n\n"
+            "Unfortunately, your registration could not be approved at this time.\n\n"
+            "If you have questions or believe this was a mistake, please contact an admin."
+        ),
     )
 
 
